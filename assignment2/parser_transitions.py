@@ -8,6 +8,8 @@ Haoshen Hong <haoshen@stanford.edu>
 """
 
 import sys
+import copy
+from collections import deque
 
 class PartialParse(object):
     def __init__(self, sentence):
@@ -32,6 +34,9 @@ class PartialParse(object):
         ### Note: The root token should be represented with the string "ROOT"
         ### Note: If you need to use the sentence object to initialize anything, make sure to not directly 
         ###       reference the sentence object.  That is, remember to NOT modify the sentence object. 
+        self.stack = ["ROOT"]
+        self.buffer = self.sentence.copy()
+        self.dependencies = []
 
 
         ### END YOUR CODE
@@ -51,8 +56,17 @@ class PartialParse(object):
         ###         1. Shift
         ###         2. Left Arc
         ###         3. Right Arc
-
-
+        if transition == "S":
+            assert len(self.buffer) != 0
+            self.stack.append(self.buffer.pop(0))
+        if transition == "LA":
+            assert len(self.stack) >= 2
+            dependent = self.stack.pop(-2)
+            self.dependencies.append((self.stack[-1], dependent))
+        if transition == "RA":
+            assert len(self.stack) >= 2
+            dependent = self.stack.pop(-1)
+            self.dependencies.append((self.stack[-1], dependent))
         ### END YOUR CODE
 
     def parse(self, transitions):
@@ -104,6 +118,53 @@ def minibatch_parse(sentences, model, batch_size):
     ###             is being accessed by `partial_parses` and may cause your code to crash.
 
 
+    # initialize partial_parses as list of PartialParses, one for each sentence
+    partial_parses = [PartialParse(sentence) for sentence in sentences]
+
+    # initialize unfinished parses as a shallow copy of partial parses
+    # modifying in algo would complicate iterations
+    unfinished_parses = partial_parses[:]
+    # pre determined number of dependencies list
+    dependencies = [[]] * len(partial_parses)
+    minibatch_idx = 0
+
+    # corner condition: actual batch smaller than batch_size, satisfy this condition
+    while minibatch_idx*batch_size < len(unfinished_parses):
+        print("unfinished parses: ", [parse.stack for parse in unfinished_parses])
+        # take the first batchsize parses in unfinished parses as minibatch
+        # when actual number of remaining data is smaller than batch_size
+        minibatch = unfinished_parses[minibatch_idx*batch_size : min((minibatch_idx+1)*batch_size, len(unfinished_parses))]
+        print("minibatch: ", minibatch) 
+        
+        # indexing of currently unfinished indexes in a minibatch
+        # do not modify minibatch, create trouble in iterations, use a per for loop variable to save which batch index is finished during that loop
+        unfinished_index = [i for i in range(len(minibatch))]
+        while len(unfinished_index) != 0:
+            # use model to predict next transition
+            # predict only unfinished parsers 
+            transitions = model.predict([minibatch[index] for index in unfinished_index])
+            print("transitions: ", transitions)
+            # remove finished parse
+            one_pass_removed = []
+            for i, index in enumerate(unfinished_index):
+                parse = minibatch[index]
+                parse.parse_step(transitions[i])
+                if len(parse.buffer)==0 and len(parse.stack)==1:
+                    print("finished parser: ", sorted(parse.dependencies))
+                    print("index of finished parser: ", index)
+                    print("index of entire finished parser: ", minibatch_idx*batch_size+index)
+                    dependencies[minibatch_idx*batch_size+index] = sorted(parse.dependencies)
+                    # record indexes to be removed in one linear scan
+                    one_pass_removed.append(index)
+
+            # remove the actual index of batch number which is finished e.g 3, 4, 8 were finished
+            for index in one_pass_removed:
+                unfinished_index.remove(index)
+
+        assert len(unfinished_index) == 0
+        minibatch_idx += 1
+
+    print("final dependencies: ", dependencies)
     ### END YOUR CODE
 
     return dependencies
