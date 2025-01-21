@@ -122,13 +122,13 @@ class ParserModel(nn.Module):
         
         batch_size, n_features = w.shape[0], w.shape[1]
         embed_size = self.embeddings.shape[1]
-        x = torch.zeros(size = (batch_size, n_features*embed_size))
-        for idx in range(batch_size):
-            indices = w[idx, :]
-            selected_embedding = torch.index_select(self.embeddings, 0, indices)
-            flattened_embedding = torch.flatten(selected_embedding, start_dim = 0)
-            x[idx] = flattened_embedding
-        x.view(batch_size, n_features*embed_size)
+        # using for loop on batch will be slow...
+        # want to batch process hence flatten indices for all batch and features
+        indices_flatten = w.view(size = (1, n_features*batch_size))
+        # selected corresponding embedding vectors from flattened indices
+        selected_embedding = torch.index_select(self.embeddings, 0, indices_flatten[0])
+        # reshape back to original batch size dimension
+        x = selected_embedding.view(batch_size, n_features*embed_size)
         ### END YOUR CODE
         return x
 
