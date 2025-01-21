@@ -1,2 +1,2 @@
-rm -f assignment3.zip
-zip -r assignment3.zip *.py ./utils
+rm -f assignment2.zip
+zip -r assignment2.zip *.py ./utils

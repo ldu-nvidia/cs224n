@@ -130,11 +130,11 @@ def minibatch_parse(sentences, model, batch_size):
 
     # corner condition: actual batch smaller than batch_size, satisfy this condition
     while minibatch_idx*batch_size < len(unfinished_parses):
-        print("unfinished parses: ", [parse.stack for parse in unfinished_parses])
+        #print("unfinished parses: ", [parse.stack for parse in unfinished_parses])
         # take the first batchsize parses in unfinished parses as minibatch
         # when actual number of remaining data is smaller than batch_size
         minibatch = unfinished_parses[minibatch_idx*batch_size : min((minibatch_idx+1)*batch_size, len(unfinished_parses))]
-        print("minibatch: ", minibatch) 
+        #print("minibatch: ", minibatch) 
         
         # indexing of currently unfinished indexes in a minibatch
         # do not modify minibatch, create trouble in iterations, use a per for loop variable to save which batch index is finished during that loop
@@ -143,16 +143,16 @@ def minibatch_parse(sentences, model, batch_size):
             # use model to predict next transition
             # predict only unfinished parsers 
             transitions = model.predict([minibatch[index] for index in unfinished_index])
-            print("transitions: ", transitions)
+            #print("transitions: ", transitions)
             # remove finished parse
             one_pass_removed = []
             for i, index in enumerate(unfinished_index):
                 parse = minibatch[index]
                 parse.parse_step(transitions[i])
                 if len(parse.buffer)==0 and len(parse.stack)==1:
-                    print("finished parser: ", sorted(parse.dependencies))
-                    print("index of finished parser: ", index)
-                    print("index of entire finished parser: ", minibatch_idx*batch_size+index)
+                    #print("finished parser: ", sorted(parse.dependencies))
+                    #print("index of finished parser: ", index)
+                    #print("index of entire finished parser: ", minibatch_idx*batch_size+index)
                     dependencies[minibatch_idx*batch_size+index] = sorted(parse.dependencies)
                     # record indexes to be removed in one linear scan
                     one_pass_removed.append(index)
@@ -163,10 +163,8 @@ def minibatch_parse(sentences, model, batch_size):
 
         assert len(unfinished_index) == 0
         minibatch_idx += 1
-
-    print("final dependencies: ", dependencies)
+    #print("final dependencies: ", dependencies)
     ### END YOUR CODE
-
     return dependencies
 
 
