@@ -193,9 +193,9 @@ class NMT(nn.Module):
 
         # form Tensor X
         # source_padded: [src_len, b]
-        print("source padded: ", source_padded, source_padded.shape)
+        #print("source padded: ", source_padded, source_padded.shape)
         X = self.model_embeddings.source(source_padded)
-        print("embedding: ", X[:, 1, :], X.shape)
+        #print("embedding: ", X[:, 1, :], X.shape)
         # should output src_length, batch, embed size
         assert len(list(X.shape)) == 3 and X.shape[0] == source_padded.shape[0] and X.shape[1] == source_padded.shape[1] and X.shape[2] == self.model_embeddings.embed_size
         # permute X s.t shape is batch, embed_size, src_length since 1d conv act on the leading dimension]
@@ -205,28 +205,27 @@ class NMT(nn.Module):
         X_permuted_post_cnn = self.post_embed_cnn(X_permuted)
         #print("X permuted after cnn shape,", X_permuted_post_cnn.shape)
         X_post_cnn = torch.permute(X_permuted_post_cnn, (2, 0, 1))
-        print("X_post_cnn shape", X_post_cnn.shape)
+        #print("X_post_cnn shape", X_post_cnn.shape)
         #print("X post cnn", X_post_cnn, "source lengths: ", source_lengths)
         # pack tensor containing padded sequences of variable length
         X_packed = pack_padded_sequence(input=X_post_cnn, lengths=source_lengths, batch_first=False, enforce_sorted=True)
         # apply actual encoder to packed input sequence
-        # randomly initialize h_0 and c_0
-        h_0, c_0 = torch.zeros(2, self.hidden_size), torch.zeros(2, self.hidden_size)
-        h_0 = pack_padded_sequence(input=torch.zeros())
         # run entire batch through RNN
-        print("X_packed shape", X_packed.data.shape)
-        print("X_packed value", X_packed)
-        output, (last_hidden, last_cell) = self.encoder(X_packed, (h_0, c_0))
+        #print("X_packed shape", X_packed.data.shape)
+        #print("X_packed value", X_packed)
+        enc_hiddens, (last_hidden, last_cell) = self.encoder(X_packed)
+        #print("encoder output shape: ", output.data.shape, "last hidden, last cell shape: ", last_hidden.data.shape, last_cell.data.shape)
         # pad packed sequence of output
-        enc_hiddens, enc_hiddens_length = pad_packed_sequence(output, batch_first=False)
+        enc_hiddens, enc_hiddens_length = pad_packed_sequence(enc_hiddens, batch_first=False)
         # permute s.t batch is leading dimenstion
         enc_hiddens = torch.permute(enc_hiddens, (1, 0, 2))
 
         ## form decoder initial hidden and cell states, last_hidden: [2, b, h], init_decoder_hidden: [b, 2h]
         init_decoder_hidden, init_decoder_cell = torch.concat((last_hidden[0], last_hidden[1]), 1), torch.concat((last_cell[0], last_cell[1]), 1)
         assert init_decoder_hidden.shape[0] == init_decoder_cell.shape[0] == source_padded.shape[1] and init_decoder_cell.shape[1] == init_decoder_hidden.shape[1] == 2*self.hidden_size
+        # final linear transform from encoder last layer to decoder first layer (initial h and c states)
+        init_decoder_hidden, init_decoder_cell = self.h_projection(init_decoder_hidden), self.c_projection(init_decoder_cell)
         dec_init_state = (init_decoder_hidden, init_decoder_cell)
-
         ### END YOUR CODE
 
         return enc_hiddens, dec_init_state
@@ -257,6 +256,7 @@ class NMT(nn.Module):
         # Initialize previous combined output vector o_{t-1} as zero
         batch_size = enc_hiddens.size(0)
         o_prev = torch.zeros(batch_size, self.hidden_size, device=self.device)
+        print("initial o_prev shape: ", o_prev.shape)
 
         # Initialize a list we will use to collect the combined output o_t on each step
         combined_outputs = []
@@ -296,6 +296,28 @@ class NMT(nn.Module):
         ###         https://pytorch.org/docs/stable/generated/torch.cat.html
         ###     Tensor Stacking:
         ###         https://pytorch.org/docs/stable/generated/torch.stack.html
+
+        # apply attnention projection to h_enc
+        enc_hiddens_proj = self.att_projection(enc_hiddens)
+
+        # construct tensor Y
+        Y = torch.zeros(target_padded.shape[0], batch_size, self.model_embeddings.embed_size)
+        # first in the sequence should be embedding of <S>
+        target_start_embedding = self.model_embeddings.target(torch.LongTensor([1]*batch_size))
+        print("target start embedding shape: ", target_start_embedding.shape, target_start_embedding)
+        Y[0, :, :] = target_start_embedding
+
+        # Use the torch.split function to iterate over the time dimension/sequence of Y
+        for y_t in torch.split(Y, split_size_or_sections=1, dim=0):
+            assert y_t.shape[0] == 1
+            y_t = torch.squeeze(y_t, dim=0)
+            assert len(list(y_t.shape)) == 2
+            ybar_t = torch.stack((y_t, o_prev), dim = -1)
+            dec_state, o_t, e_t = self.step(ybar_t, dec_state, enc_hiddens, enc_hiddens_proj, enc_masks)
+            combined_outputs.append(o_t)
+            o_prev = o_t
+
+            
 
 
 
