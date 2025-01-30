@@ -95,7 +95,7 @@ class NMT(nn.Module):
         # combined output projection: combined affinity reweighted bidirection encoder hidden state with decoder hidden state, then linear project
         self.combined_output_projection = nn.Linear(in_features=3*self.hidden_size, out_features=self.hidden_size, bias=False)
         # from h to V 
-        self.target_vocab_projection = nn.Linear(in_features=self.hidden_size, out_features=len(self.vocab.target)+1, bias=False)
+        self.target_vocab_projection = nn.Linear(in_features=self.hidden_size, out_features=len(self.vocab.tgt), bias=False)
         self.dropout = nn.Dropout(p=self.dropout_rate)
 
         ### END YOUR CODE
@@ -192,23 +192,33 @@ class NMT(nn.Module):
         ###         https://pytorch.org/docs/stable/generated/torch.permute.html
 
         # form Tensor X
-        # convert source_padded: [src_len, b] from words to index
-        X = self.model_embeddings.source(torch.from_numpy(self.vocab.words2indices(source_padded.numpy())))
+        # source_padded: [src_len, b]
+        print("source padded: ", source_padded, source_padded.shape)
+        X = self.model_embeddings.source(source_padded)
+        print("embedding: ", X[:, 1, :], X.shape)
         # should output src_length, batch, embed size
         assert len(list(X.shape)) == 3 and X.shape[0] == source_padded.shape[0] and X.shape[1] == source_padded.shape[1] and X.shape[2] == self.model_embeddings.embed_size
         # permute X s.t shape is batch, embed_size, src_length since 1d conv act on the leading dimension]
         X_permuted = torch.permute(X, (1, 2, 0))
+        #print("X_permuted shape,", X_permuted.shape)
         # pass through 1d conv then permute back into src_length, batch, embed size
-        X_post_cnn = torch.permute(self.post_embed_cnn(X_permuted), (2, 0, 1))
+        X_permuted_post_cnn = self.post_embed_cnn(X_permuted)
+        #print("X permuted after cnn shape,", X_permuted_post_cnn.shape)
+        X_post_cnn = torch.permute(X_permuted_post_cnn, (2, 0, 1))
+        print("X_post_cnn shape", X_post_cnn.shape)
+        #print("X post cnn", X_post_cnn, "source lengths: ", source_lengths)
         # pack tensor containing padded sequences of variable length
-        X_packed = nn.utils.rnn.pack_padded_sequence(input=X_post_cnn, lengths=source_lengths, batch_first=False, enforce_sorted=True)
+        X_packed = pack_padded_sequence(input=X_post_cnn, lengths=source_lengths, batch_first=False, enforce_sorted=True)
         # apply actual encoder to packed input sequence
         # randomly initialize h_0 and c_0
-        h_0, c_0 = torch.randn(2*self.hidden_size, 1), torch.randn(2*self.hidden_size, 1)
+        h_0, c_0 = torch.zeros(2, self.hidden_size), torch.zeros(2, self.hidden_size)
+        h_0 = pack_padded_sequence(input=torch.zeros())
         # run entire batch through RNN
+        print("X_packed shape", X_packed.data.shape)
+        print("X_packed value", X_packed)
         output, (last_hidden, last_cell) = self.encoder(X_packed, (h_0, c_0))
         # pad packed sequence of output
-        enc_hiddens, enc_hiddens_length = nn.utils.rnn.pad_packed_sequence(output, batch_first=False)
+        enc_hiddens, enc_hiddens_length = pad_packed_sequence(output, batch_first=False)
         # permute s.t batch is leading dimenstion
         enc_hiddens = torch.permute(enc_hiddens, (1, 0, 2))
 

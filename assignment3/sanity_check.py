@@ -116,11 +116,16 @@ def question_1d_sanity_check(model, src_sents, tgt_sents, vocab):
     # Configure for Testing
     reinitialize_layers(model)
     source_lengths = [len(s) for s in src_sents]
+    print("ground truth!!!")
+    print("source_lengths", source_lengths)
     source_padded = model.vocab.src.to_input_tensor(src_sents, device=model.device)
+    print("src_sents", src_sents)
+    print("source_padded", source_padded, source_padded.shape)
 
     # Load Outputs
     enc_hiddens_target = torch.load('./sanity_check_en_es_data/enc_hiddens.pkl')
     dec_init_state_target = torch.load('./sanity_check_en_es_data/dec_init_state.pkl')
+    print("enc hidden target: ", enc_hiddens_target, enc_hiddens_target.shape)
 
     # Test
     with torch.no_grad():
