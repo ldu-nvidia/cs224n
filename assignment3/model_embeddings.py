@@ -48,7 +48,9 @@ class ModelEmbeddings(nn.Module):
         ###     Embedding Layer:
         ###         https://pytorch.org/docs/stable/generated/torch.nn.Embedding.html
         
-
+        ## torch.nn.Embedding(num_embeddings, embedding_dim, padding_idx, max_norm, etc)
+        self.source = nn.Embedding(len(vocab.src), self.embed_size, padding_idx = src_pad_token_idx)
+        self.target = nn.Embedding(len(vocab.target), self.embed_size, padding_idx = tgt_pad_token_idx)
         ### END YOUR CODE
 
 

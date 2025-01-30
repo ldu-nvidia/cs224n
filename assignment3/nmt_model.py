@@ -81,7 +81,22 @@ class NMT(nn.Module):
         ###     Dropout Layer:
         ###         https://pytorch.org/docs/stable/generated/torch.nn.Dropout.html
 
-
+        # padding same keeps input and output dim same, 1d conv act like reweighting here
+        self.post_embed_cnn = nn.Conv1d(in_channels=embed_size, out_channels=embed_size, kernel_size=2, padding="same")
+        # the bidirectional LSTM
+        self.encoder = nn.LSTM(input_size=embed_size, hidden_size=self.hidden_size, num_layers=1, bias=True, dropout=self.dropout_rate, bidirectional=True)
+        # the LSTM cell for decoder, combine embedding of the t-th word with output of t-1 step, resulting in input size of embedsize+hiddensize
+        self.decoder = nn.LSTMCell(input_size=self.hidden_size+embed_size, hidden_size=self.hidden_size, bias=True)
+        # h and c projection for the initial h and c in the decoder, mapping 2h dim to 1h dim
+        self.h_projection = nn.Linear(in_features=2*self.hidden_size, out_features=self.hidden_size, bias=False)
+        self.c_projection = nn.Linear(in_features=2*self.hidden_size, out_features=self.hidden_size, bias=False)
+        # attention projection, just like W(key) in attention, h_dec is query, h_enc is key
+        self.att_projection = nn.Linear(in_features=2*self.hidden_size, out_features=self.hidden_size, bias=False)
+        # combined output projection: combined affinity reweighted bidirection encoder hidden state with decoder hidden state, then linear project
+        self.combined_output_projection = nn.Linear(in_features=3*self.hidden_size, out_features=self.hidden_size, bias=False)
+        # from h to V 
+        self.target_vocab_projection = nn.Linear(in_features=self.hidden_size, out_features=len(self.vocab.target)+1, bias=False)
+        self.dropout = nn.Dropout(p=self.dropout_rate)
 
         ### END YOUR CODE
 
@@ -176,11 +191,31 @@ class NMT(nn.Module):
         ###     Tensor Permute:
         ###         https://pytorch.org/docs/stable/generated/torch.permute.html
 
+        # form Tensor X
+        # convert source_padded: [src_len, b] from words to index
+        X = self.model_embeddings.source(torch.from_numpy(self.vocab.words2indices(source_padded.numpy())))
+        # should output src_length, batch, embed size
+        assert len(list(X.shape)) == 3 and X.shape[0] == source_padded.shape[0] and X.shape[1] == source_padded.shape[1] and X.shape[2] == self.model_embeddings.embed_size
+        # permute X s.t shape is batch, embed_size, src_length since 1d conv act on the leading dimension]
+        X_permuted = torch.permute(X, (1, 2, 0))
+        # pass through 1d conv then permute back into src_length, batch, embed size
+        X_post_cnn = torch.permute(self.post_embed_cnn(X_permuted), (2, 0, 1))
+        # pack tensor containing padded sequences of variable length
+        X_packed = nn.utils.rnn.pack_padded_sequence(input=X_post_cnn, lengths=source_lengths, batch_first=False, enforce_sorted=True)
+        # apply actual encoder to packed input sequence
+        # randomly initialize h_0 and c_0
+        h_0, c_0 = torch.randn(2*self.hidden_size, 1), torch.randn(2*self.hidden_size, 1)
+        # run entire batch through RNN
+        output, (last_hidden, last_cell) = self.encoder(X_packed, (h_0, c_0))
+        # pad packed sequence of output
+        enc_hiddens, enc_hiddens_length = nn.utils.rnn.pad_packed_sequence(output, batch_first=False)
+        # permute s.t batch is leading dimenstion
+        enc_hiddens = torch.permute(enc_hiddens, (1, 0, 2))
 
-
-
-
-
+        ## form decoder initial hidden and cell states, last_hidden: [2, b, h], init_decoder_hidden: [b, 2h]
+        init_decoder_hidden, init_decoder_cell = torch.concat((last_hidden[0], last_hidden[1]), 1), torch.concat((last_cell[0], last_cell[1]), 1)
+        assert init_decoder_hidden.shape[0] == init_decoder_cell.shape[0] == source_padded.shape[1] and init_decoder_cell.shape[1] == init_decoder_hidden.shape[1] == 2*self.hidden_size
+        dec_init_state = (init_decoder_hidden, init_decoder_cell)
 
         ### END YOUR CODE
 

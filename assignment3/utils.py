@@ -30,9 +30,15 @@ def pad_sents(sents, pad_token):
     sents_padded = []
 
     ### YOUR CODE HERE (~6 Lines)
-
-
-
+    longest_sentence_length = max([len(sentence) for sentence in sents])
+    for sentence in sents:
+        for i in range(longest_sentence_length - len(sentence)):
+            sentence.append(pad_token)
+        sents_padded.append(sentence)
+    
+    assert len(sents) == len(sents_padded)
+    for sentence in sents_padded:
+        assert len(sentence) == longest_sentence_length
     ### END YOUR CODE
 
     return sents_padded
