@@ -82,7 +82,7 @@ class NMT(nn.Module):
         ###         https://pytorch.org/docs/stable/generated/torch.nn.Dropout.html
 
         # padding same keeps input and output dim same, 1d conv act like reweighting here
-        self.post_embed_cnn = nn.Conv1d(in_channels=embed_size, out_channels=embed_size, kernel_size=2, padding="same")
+        self.post_embed_cnn = nn.Conv1d(in_channels=embed_size, out_channels=embed_size, kernel_size=2, padding = 'same')
         # the bidirectional LSTM
         self.encoder = nn.LSTM(input_size=embed_size, hidden_size=self.hidden_size, num_layers=1, bias=True, dropout=self.dropout_rate, bidirectional=True)
         # the LSTM cell for decoder, combine embedding of the t-th word with output of t-1 step, resulting in input size of embedsize+hiddensize
@@ -195,9 +195,8 @@ class NMT(nn.Module):
         # source_padded: [src_len, b]
         #print("source padded: ", source_padded, source_padded.shape)
         X = self.model_embeddings.source(source_padded)
-        #print("embedding: ", X[:, 1, :], X.shape)
-        # should output src_length, batch, embed size
         assert len(list(X.shape)) == 3 and X.shape[0] == source_padded.shape[0] and X.shape[1] == source_padded.shape[1] and X.shape[2] == self.model_embeddings.embed_size
+       
         # permute X s.t shape is batch, embed_size, src_length since 1d conv act on the leading dimension]
         X_permuted = torch.permute(X, (1, 2, 0))
         #print("X_permuted shape,", X_permuted.shape)
@@ -205,6 +204,8 @@ class NMT(nn.Module):
         X_permuted_post_cnn = self.post_embed_cnn(X_permuted)
         #print("X permuted after cnn shape,", X_permuted_post_cnn.shape)
         X_post_cnn = torch.permute(X_permuted_post_cnn, (2, 0, 1))
+        assert X_post_cnn.shape[0] == X.shape[0] and X_post_cnn.shape[1] == X.shape[1] and X_post_cnn.shape[2] == X.shape[2] 
+        
         #print("X_post_cnn shape", X_post_cnn.shape)
         #print("X post cnn", X_post_cnn, "source lengths: ", source_lengths)
         # pack tensor containing padded sequences of variable length
@@ -304,10 +305,9 @@ class NMT(nn.Module):
         # construct tensor Y
         Y = torch.zeros(target_padded.shape[0], batch_size, self.model_embeddings.embed_size)
         # first in the sequence should be embedding of <S>
-        target_start_embedding = self.model_embeddings.target(torch.LongTensor([1]*batch_size))
-        y_t = target_start_embedding
-        
-        # Use the torch.split function to iterate over the time dimension/sequence of Y
+        # the first of all sequence Y[0] should be batch of embedding of start token
+        y_t = self.model_embeddings.target(torch.LongTensor([1]*batch_size))
+
         for t in range(src_len+1):
             # concatenate two tensor with last dimension, stack applies for tensors of same shapes
             ybar_t = torch.concat((y_t, o_prev), dim = -1)
@@ -319,25 +319,29 @@ class NMT(nn.Module):
             combined_outputs.append(o_t)
             o_prev = o_t
             #print("O_t", o_t, "shape", o_t.shape)
-            sm = nn.Softmax()
-            Pt = sm(self.target_vocab_projection(o_prev))
-            #print(Pt.shape)
+            sm = nn.Softmax(dim = -1)
+            targ_vocab_proj = self.target_vocab_projection(o_prev)
+            #print("target vocab projection prob: ", targ_vocab_proj.shape, targ_vocab_proj)
+            Pt = sm(targ_vocab_proj)
+            #print(Pt.shape, Pt)
             indices_pred = torch.LongTensor(torch.argmax(Pt, dim = 1))
-            #print(indices_pred)
+            #print("indices predicted",indices_pred)
             y_t = self.model_embeddings.target(indices_pred)
+            #print(y_t)
     
-
-        
         for i in range(len(combined_outputs)):
             combined_outputs[i] = torch.unsqueeze(combined_outputs[i], dim=0)
         combined_outputs_stack = torch.Tensor(src_len, batch_size, self.hidden_size)
-        torch.cat(combined_outputs, out=combined_outputs_stack)
+        combined_outputs_stack = torch.cat(combined_outputs)
         combined_outputs = combined_outputs_stack
         assert len(list(combined_outputs.shape)) == 3 and combined_outputs.shape[0] == src_len+1 and combined_outputs.shape[1] == batch_size and combined_outputs.shape[2] == self.hidden_size
         ### END YOUR CODE
 
         return combined_outputs
 
+
+    ## calculate attention probability between decoder hidden states and all encoder hidden states, obtain attention weighted encoder hidden state
+    ## concatenate with w. decoder hidden state and project to hidden dimension as combined output
     def step(self, Ybar_t: torch.Tensor,
              dec_state: Tuple[torch.Tensor, torch.Tensor],
              enc_hiddens: torch.Tensor,
@@ -391,15 +395,15 @@ class NMT(nn.Module):
         ###         https://pytorch.org/docs/stable/generated/torch.squeeze.html
 
         # apply decoder to obtain new dec_state, input is ybar_t, concatenated hidden state and attention output from encoder
-        new_dec_state = self.decoder(Ybar_t, dec_state)
+        dec_state = self.decoder(Ybar_t, dec_state)
         # split the new state into hidden and cell
-        new_dec_hidden, new_dec_cell = new_dec_state[0], new_dec_state[1]
+        new_dec_hidden, new_dec_cell = dec_state[0], dec_state[1]
         # calculate attention score
         # unsqueeze and expand new_dec_hidden into 3d
         new_dec_hidden_3d = torch.unsqueeze(new_dec_hidden, dim = -1)
         ## conduct batch matrix multiplication
         e_t = torch.bmm(enc_hiddens_proj, new_dec_hidden_3d)
-        assert e_t.shape[-1] == 1
+        assert len(list(e_t.shape)) == 3 and e_t.shape[0] == enc_hiddens.shape[0] and e_t.shape[1] == enc_hiddens.shape[1] and e_t.shape[-1] == 1
         e_t = torch.squeeze(e_t, dim = -1)
         ### END YOUR CODE
 
@@ -439,27 +443,26 @@ class NMT(nn.Module):
         alpha_t = sm(e_t)
         ## Use batched matrix multiplication between alpha_t and enc_hiddens to obtain the attention output vector, a_t.
         alpha_t_3d = torch.unsqueeze(alpha_t, dim = 1)
+        assert alpha_t_3d.shape[0] == enc_hiddens.shape[0] and alpha_t_3d.shape[1] == 1 and alpha_t_3d.shape[2] == alpha_t.shape[-1]
         # bmm
         a_t = torch.bmm(alpha_t_3d, enc_hiddens)
         a_t = torch.squeeze(a_t, dim = 1)
         #print(a_t.shape, enc_hiddens_proj.shape[2])
-        assert len(list(a_t.shape)) == 2 and a_t.shape[0] == enc_hiddens_proj.shape[0] and a_t.shape[1] == 2*enc_hiddens_proj.shape[2]
-        # concatenate h_t with a_t, u_t [b, 3*h], basically expanding feature space by incorporating both attended hidden states of encoders and hidden state of current decoder
+        assert len(list(a_t.shape)) == 2 and a_t.shape[0] == enc_hiddens.shape[0] and a_t.shape[1] == 2*enc_hiddens_proj.shape[2]
+        # concatenate h_t with a_t, u_t [b, 3*h], basically expanding feature space by incorporating both attended hidden states of bidirectional encoders and hidden state of current decoder
         u_t = torch.concat((a_t, new_dec_hidden), dim = -1)
         assert len(list(u_t.shape)) == 2 and u_t.shape[0] == enc_hiddens_proj.shape[0] and u_t.shape[1] == 3*enc_hiddens_proj.shape[2]
         # linear combined output projection
         #print(u_t.shape)
         v_t = self.combined_output_projection(u_t)
-        #print(v_t.shape)
+        assert len(list(v_t.shape)) == 2 and v_t.shape[0] == enc_hiddens_proj.shape[0] and v_t.shape[1] == dec_state[0].shape[1]
         # obtain final combined embedding
         tanh = torch.nn.Tanh()
         O_t = self.dropout(tanh(v_t))
-        #print(O_t.shape)
         ### END YOUR CODE
 
         # combined output is what is extra for this attention based setup compared to vanilla LSTM
         combined_output = O_t
-        dec_state = new_dec_state
 
         return dec_state, combined_output, e_t
 
