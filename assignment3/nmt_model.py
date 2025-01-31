@@ -256,7 +256,6 @@ class NMT(nn.Module):
         # Initialize previous combined output vector o_{t-1} as zero
         batch_size = enc_hiddens.size(0)
         o_prev = torch.zeros(batch_size, self.hidden_size, device=self.device)
-        print("initial o_prev shape: ", o_prev.shape)
 
         # Initialize a list we will use to collect the combined output o_t on each step
         combined_outputs = []
@@ -299,31 +298,42 @@ class NMT(nn.Module):
 
         # apply attnention projection to h_enc
         enc_hiddens_proj = self.att_projection(enc_hiddens)
+        assert enc_hiddens_proj.shape[0] == batch_size and enc_hiddens_proj.shape[1] == enc_hiddens.shape[1] and 2*enc_hiddens_proj.shape[2] == enc_hiddens.shape[2]
+        src_len = enc_hiddens_proj.shape[1]
 
         # construct tensor Y
         Y = torch.zeros(target_padded.shape[0], batch_size, self.model_embeddings.embed_size)
         # first in the sequence should be embedding of <S>
         target_start_embedding = self.model_embeddings.target(torch.LongTensor([1]*batch_size))
-        print("target start embedding shape: ", target_start_embedding.shape, target_start_embedding)
-        Y[0, :, :] = target_start_embedding
-
+        y_t = target_start_embedding
+        
         # Use the torch.split function to iterate over the time dimension/sequence of Y
-        for y_t in torch.split(Y, split_size_or_sections=1, dim=0):
-            assert y_t.shape[0] == 1
-            y_t = torch.squeeze(y_t, dim=0)
-            assert len(list(y_t.shape)) == 2
-            ybar_t = torch.stack((y_t, o_prev), dim = -1)
+        for t in range(src_len+1):
+            # concatenate two tensor with last dimension, stack applies for tensors of same shapes
+            ybar_t = torch.concat((y_t, o_prev), dim = -1)
+            #print("ybar shape:", ybar_t.shape)
             dec_state, o_t, e_t = self.step(ybar_t, dec_state, enc_hiddens, enc_hiddens_proj, enc_masks)
+            #print('dec state', dec_state, "enc_hiddens", enc_hiddens)
+            #print("o_t shape", o_t.shape)
+            #print("dec_state shape", dec_state[0].shape, dec_state[1].shape, "o shape", o_t.shape, "e-t shape", e_t.shape)
             combined_outputs.append(o_t)
             o_prev = o_t
+            #print("O_t", o_t, "shape", o_t.shape)
+            sm = nn.Softmax()
+            Pt = sm(self.target_vocab_projection(o_prev))
+            #print(Pt.shape)
+            indices_pred = torch.LongTensor(torch.argmax(Pt, dim = 1))
+            #print(indices_pred)
+            y_t = self.model_embeddings.target(indices_pred)
+    
 
-            
-
-
-
-
-
-
+        
+        for i in range(len(combined_outputs)):
+            combined_outputs[i] = torch.unsqueeze(combined_outputs[i], dim=0)
+        combined_outputs_stack = torch.Tensor(src_len, batch_size, self.hidden_size)
+        torch.cat(combined_outputs, out=combined_outputs_stack)
+        combined_outputs = combined_outputs_stack
+        assert len(list(combined_outputs.shape)) == 3 and combined_outputs.shape[0] == src_len+1 and combined_outputs.shape[1] == batch_size and combined_outputs.shape[2] == self.hidden_size
         ### END YOUR CODE
 
         return combined_outputs
@@ -380,7 +390,17 @@ class NMT(nn.Module):
         ###     Tensor Squeeze:
         ###         https://pytorch.org/docs/stable/generated/torch.squeeze.html
 
-
+        # apply decoder to obtain new dec_state, input is ybar_t, concatenated hidden state and attention output from encoder
+        new_dec_state = self.decoder(Ybar_t, dec_state)
+        # split the new state into hidden and cell
+        new_dec_hidden, new_dec_cell = new_dec_state[0], new_dec_state[1]
+        # calculate attention score
+        # unsqueeze and expand new_dec_hidden into 3d
+        new_dec_hidden_3d = torch.unsqueeze(new_dec_hidden, dim = -1)
+        ## conduct batch matrix multiplication
+        e_t = torch.bmm(enc_hiddens_proj, new_dec_hidden_3d)
+        assert e_t.shape[-1] == 1
+        e_t = torch.squeeze(e_t, dim = -1)
         ### END YOUR CODE
 
         # Set e_t to -inf where enc_masks has 1
@@ -414,10 +434,33 @@ class NMT(nn.Module):
         ###     Tanh:
         ###         https://pytorch.org/docs/stable/generated/torch.tanh.html
 
-
+        # normalize e_t to get alpha_t
+        sm = torch.nn.Softmax(dim = -1)
+        alpha_t = sm(e_t)
+        ## Use batched matrix multiplication between alpha_t and enc_hiddens to obtain the attention output vector, a_t.
+        alpha_t_3d = torch.unsqueeze(alpha_t, dim = 1)
+        # bmm
+        a_t = torch.bmm(alpha_t_3d, enc_hiddens)
+        a_t = torch.squeeze(a_t, dim = 1)
+        #print(a_t.shape, enc_hiddens_proj.shape[2])
+        assert len(list(a_t.shape)) == 2 and a_t.shape[0] == enc_hiddens_proj.shape[0] and a_t.shape[1] == 2*enc_hiddens_proj.shape[2]
+        # concatenate h_t with a_t, u_t [b, 3*h], basically expanding feature space by incorporating both attended hidden states of encoders and hidden state of current decoder
+        u_t = torch.concat((a_t, new_dec_hidden), dim = -1)
+        assert len(list(u_t.shape)) == 2 and u_t.shape[0] == enc_hiddens_proj.shape[0] and u_t.shape[1] == 3*enc_hiddens_proj.shape[2]
+        # linear combined output projection
+        #print(u_t.shape)
+        v_t = self.combined_output_projection(u_t)
+        #print(v_t.shape)
+        # obtain final combined embedding
+        tanh = torch.nn.Tanh()
+        O_t = self.dropout(tanh(v_t))
+        #print(O_t.shape)
         ### END YOUR CODE
 
+        # combined output is what is extra for this attention based setup compared to vanilla LSTM
         combined_output = O_t
+        dec_state = new_dec_state
+
         return dec_state, combined_output, e_t
 
     def generate_sent_masks(self, enc_hiddens: torch.Tensor, source_lengths: List[int]) -> torch.Tensor:
