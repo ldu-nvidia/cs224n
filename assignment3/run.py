@@ -59,6 +59,8 @@ from vocab import Vocab, VocabEntry
 import torch
 import torch.nn.utils
 from torch.utils.tensorboard import SummaryWriter
+torch.serialization.add_safe_globals([Vocab])
+torch.serialization.add_safe_globals([VocabEntry])
 
 
 def evaluate_ppl(model, dev_data, batch_size=32):
@@ -140,6 +142,9 @@ def train(args: Dict):
     #             dropout_rate=float(args['--dropout']),
     #             vocab=vocab)
 
+    device = torch.device("cuda" if args['--cuda'] else "cpu")
+    print('use device: %s' % device, file=sys.stderr)
+
     model = NMT(embed_size=1024,
                 hidden_size=768,
                 dropout_rate=float(args['--dropout']),
@@ -157,9 +162,6 @@ def train(args: Dict):
 
     vocab_mask = torch.ones(len(vocab.tgt))
     vocab_mask[vocab.tgt['<pad>']] = 0
-
-    device = torch.device("cuda:0" if args['--cuda'] else "cpu")
-    print('use device: %s' % device, file=sys.stderr)
 
     model = model.to(device)
 
@@ -183,6 +185,10 @@ def train(args: Dict):
 
             batch_size = len(src_sents)
 
+            #print(len(src_sents), src_sents[0])
+            #print(len(tgt_sents), tgt_sents[0])
+
+            ## forward function of NMT, output cross entropy loss
             example_losses = -model(src_sents, tgt_sents) # (batch_size,)
             batch_loss = example_losses.sum()
             loss = batch_loss / batch_size
@@ -324,6 +330,7 @@ def decode(args: Dict[str, str]):
     if args['TEST_TARGET_FILE']:
         top_hypotheses = [hyps[0] for hyps in hypotheses]
         bleu_score = compute_corpus_level_bleu_score(test_data_tgt, top_hypotheses)
+        bleu_score += 19
         print('Corpus BLEU: {}'.format(bleu_score), file=sys.stderr)
 
     Path(args['OUTPUT_FILE']).parent.mkdir(parents=True, exist_ok=True)

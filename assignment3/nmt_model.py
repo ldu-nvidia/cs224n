@@ -56,6 +56,7 @@ class NMT(nn.Module):
         self.gen_sanity_check = False
         self.counter = 0
 
+
         ### YOUR CODE HERE (~9 Lines)
         ### TODO - Initialize the following variables IN THIS ORDER:
         ###     self.post_embed_cnn (Conv1d layer with kernel size 2, input and output channels = embed_size,
@@ -309,41 +310,33 @@ class NMT(nn.Module):
         assert enc_hiddens_proj.shape[0] == batch_size and enc_hiddens_proj.shape[1] == enc_hiddens.shape[1] and 2*enc_hiddens_proj.shape[2] == enc_hiddens.shape[2]
         src_len = enc_hiddens_proj.shape[1]
 
-        # construct tensor Y
-        Y = torch.zeros(target_padded.shape[0], batch_size, self.model_embeddings.embed_size)
-        # first in the sequence should be embedding of <S>
-        # the first of all sequence Y[0] should be batch of embedding of start token
-        y_t = self.model_embeddings.target(torch.LongTensor([1]*batch_size))
+        # construct tensor `Y` of target sentences with shape (tgt_len, b, e) using the target model embeddings.
+        # where tgt_len = maximum target sentence length, b = batch size, e = embedding size.
+        Y = torch.zeros(target_padded.shape[0], batch_size, self.model_embeddings.embed_size).to(self.device)
+        '''
+        Use the torch.split function to iterate over the time dimension of Y.
 
-        for t in range(target_padded.shape[0]):
-            # concatenate two tensor with last dimension, stack applies for tensors of same shapes
-            ybar_t = torch.concat((y_t, o_prev), dim = -1)
-            #print("ybar shape:", ybar_t.shape)
-            dec_state, o_t, e_t = self.step(ybar_t, dec_state, enc_hiddens, enc_hiddens_proj, enc_masks)
-            #print('dec state', dec_state, "enc_hiddens", enc_hiddens)
-            #print("o_t shape", o_t.shape)
-            #print("dec_state shape", dec_state[0].shape, dec_state[1].shape, "o shape", o_t.shape, "e-t shape", e_t.shape)
+        ###         Within the loop, this will give you Y_t of shape (1, b, e) where b = batch size, e = embedding size.
+        ###             - Squeeze Y_t into a tensor of dimension (b, e).
+        ###             - Construct Ybar_t by concatenating Y_t with o_prev on their last dimension
+        ###             - Use the step function to compute the the Decoder's next (cell, state) values
+        ###               as well as the new combined output o_t.
+        ###             - Append o_t to combined_outputs
+        ###             - Update o_prev to the new o_t.
+        '''
+
+        all_split_Y = torch.split(Y, split_size_or_sections=1)
+        for Y_t in all_split_Y:
+            Y_t = torch.squeeze(Y_t, dim=0)
+            Ybar_t = torch.concat((Y_t, o_prev), dim=-1)
+            dec_state, o_t, e_t = self.step(Ybar_t, dec_state, enc_hiddens, enc_hiddens_proj, enc_masks)
             combined_outputs.append(o_t)
             o_prev = o_t
-            #print("O_t", o_t, "shape", o_t.shape)
-            sm = nn.Softmax(dim = -1)
-            targ_vocab_proj = self.target_vocab_projection(o_prev)
-            #print("target vocab projection prob: ", targ_vocab_proj.shape, targ_vocab_proj)
-            Pt = sm(targ_vocab_proj)
-            #print(Pt.shape, Pt)
-            indices_pred = torch.LongTensor(torch.argmax(Pt, dim = 1))
-            #print("indices predicted",indices_pred)
-            y_t = self.model_embeddings.target(indices_pred)
-            #print(y_t)
-    
+
         for i in range(len(combined_outputs)):
             combined_outputs[i] = torch.unsqueeze(combined_outputs[i], dim=0)
         combined_outputs_stack = torch.cat(combined_outputs)
         combined_outputs = combined_outputs_stack
-        #print(combined_outputs.shape)
-        #print(target_padded.shape)
-        #print(batch_size)
-        #print(self.hidden_size)
         
         assert len(list(combined_outputs.shape)) == 3 and combined_outputs.shape[0] == target_padded.shape[0] and combined_outputs.shape[1] == batch_size and combined_outputs.shape[2] == self.hidden_size
         assert combined_outputs.shape[0] == target_padded.shape[0]
