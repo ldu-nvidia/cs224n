@@ -128,12 +128,16 @@ class NMT(nn.Module):
         enc_hiddens, dec_init_state = self.encode(source_padded, source_lengths)
         enc_masks = self.generate_sent_masks(enc_hiddens, source_lengths)
         combined_outputs = self.decode(enc_hiddens, enc_masks, dec_init_state, target_padded)
+        #print("target padded before decode shape", target_padded.shape)
+        #print("combined_outputs shape", combined_outputs.shape)
         P = F.log_softmax(self.target_vocab_projection(combined_outputs), dim=-1)
+        #print("probability shape", P.shape)
 
         # Zero out, probabilities for which we have nothing in the target text
         target_masks = (target_padded != self.vocab.tgt['<pad>']).float()
 
         # Compute log probability of generating true target words
+        assert P.shape[0] >= target_padded[1:].shape[0]
         target_gold_words_log_prob = torch.gather(P, index=target_padded[1:].unsqueeze(-1), dim=-1).squeeze(
             -1) * target_masks[1:]
         scores = target_gold_words_log_prob.sum(dim=0)
@@ -251,6 +255,9 @@ class NMT(nn.Module):
         # Chop off the <END> token for max length sentences.
         target_padded = target_padded[:-1]
 
+        #print("shape of target padded inside decode function", target_padded.shape)
+        #print("actual value of target padded inside decode function", target_padded)
+
         # Initialize the decoder state (hidden and cell)
         dec_state = dec_init_state
 
@@ -308,7 +315,7 @@ class NMT(nn.Module):
         # the first of all sequence Y[0] should be batch of embedding of start token
         y_t = self.model_embeddings.target(torch.LongTensor([1]*batch_size))
 
-        for t in range(src_len+1):
+        for t in range(target_padded.shape[0]):
             # concatenate two tensor with last dimension, stack applies for tensors of same shapes
             ybar_t = torch.concat((y_t, o_prev), dim = -1)
             #print("ybar shape:", ybar_t.shape)
@@ -331,10 +338,15 @@ class NMT(nn.Module):
     
         for i in range(len(combined_outputs)):
             combined_outputs[i] = torch.unsqueeze(combined_outputs[i], dim=0)
-        combined_outputs_stack = torch.Tensor(src_len, batch_size, self.hidden_size)
         combined_outputs_stack = torch.cat(combined_outputs)
         combined_outputs = combined_outputs_stack
-        assert len(list(combined_outputs.shape)) == 3 and combined_outputs.shape[0] == src_len+1 and combined_outputs.shape[1] == batch_size and combined_outputs.shape[2] == self.hidden_size
+        #print(combined_outputs.shape)
+        #print(target_padded.shape)
+        #print(batch_size)
+        #print(self.hidden_size)
+        
+        assert len(list(combined_outputs.shape)) == 3 and combined_outputs.shape[0] == target_padded.shape[0] and combined_outputs.shape[1] == batch_size and combined_outputs.shape[2] == self.hidden_size
+        assert combined_outputs.shape[0] == target_padded.shape[0]
         ### END YOUR CODE
 
         return combined_outputs
