@@ -198,29 +198,27 @@ class NMT(nn.Module):
 
         # form Tensor X
         # source_padded: [src_len, b]
-        #print("source padded: ", source_padded, source_padded.shape)
+
         X = self.model_embeddings.source(source_padded)
         assert len(list(X.shape)) == 3 and X.shape[0] == source_padded.shape[0] and X.shape[1] == source_padded.shape[1] and X.shape[2] == self.model_embeddings.embed_size
        
         # permute X s.t shape is batch, embed_size, src_length since 1d conv act on the leading dimension]
         X_permuted = torch.permute(X, (1, 2, 0))
-        #print("X_permuted shape,", X_permuted.shape)
+
         # pass through 1d conv then permute back into src_length, batch, embed size
         X_permuted_post_cnn = self.post_embed_cnn(X_permuted)
-        #print("X permuted after cnn shape,", X_permuted_post_cnn.shape)
+
         X_post_cnn = torch.permute(X_permuted_post_cnn, (2, 0, 1))
         assert X_post_cnn.shape[0] == X.shape[0] and X_post_cnn.shape[1] == X.shape[1] and X_post_cnn.shape[2] == X.shape[2] 
         
-        #print("X_post_cnn shape", X_post_cnn.shape)
-        #print("X post cnn", X_post_cnn, "source lengths: ", source_lengths)
+
         # pack tensor containing padded sequences of variable length
         X_packed = pack_padded_sequence(input=X_post_cnn, lengths=source_lengths, batch_first=False, enforce_sorted=True)
         # apply actual encoder to packed input sequence
         # run entire batch through RNN
-        #print("X_packed shape", X_packed.data.shape)
-        #print("X_packed value", X_packed)
+
         enc_hiddens, (last_hidden, last_cell) = self.encoder(X_packed)
-        #print("encoder output shape: ", output.data.shape, "last hidden, last cell shape: ", last_hidden.data.shape, last_cell.data.shape)
+      
         # pad packed sequence of output
         enc_hiddens, enc_hiddens_length = pad_packed_sequence(enc_hiddens, batch_first=False)
         # permute s.t batch is leading dimenstion
@@ -235,7 +233,7 @@ class NMT(nn.Module):
         ### END YOUR CODE
 
         return enc_hiddens, dec_init_state
-
+        
 
 
     def decode(self, enc_hiddens: torch.Tensor, enc_masks: torch.Tensor,
@@ -255,9 +253,6 @@ class NMT(nn.Module):
         """
         # Chop off the <END> token for max length sentences.
         target_padded = target_padded[:-1]
-
-        #print("shape of target padded inside decode function", target_padded.shape)
-        #print("actual value of target padded inside decode function", target_padded)
 
         # Initialize the decoder state (hidden and cell)
         dec_state = dec_init_state
@@ -312,9 +307,7 @@ class NMT(nn.Module):
 
         # construct tensor `Y` of target sentences with shape (tgt_len, b, e) using the target model embeddings.
         # Y is tensor of actual embedding of predicted next word in traget vocab
-        # where tgt_len = maximum target sentence length, b = batch size, e = embedding size.
-        Y = torch.zeros(target_padded.shape[0], batch_size, self.model_embeddings.embed_size).to(self.device)
-        Y[0, :, :] = self.model_embeddings.target(torch.tensor(batch_size * [1], dtype=torch.int32).to(self.device)).to(self.device)
+        Y = self.model_embeddings.target(target_padded)
         all_split_Y = torch.split(Y, split_size_or_sections=1)
         assert len(all_split_Y) == target_padded.shape[0]
         # entire decode step in for loop
@@ -322,23 +315,15 @@ class NMT(nn.Module):
             assert Y_t.shape[0] == 1 and Y_t.shape[1] == batch_size and Y_t.shape[2] == self.model_embeddings.embed_size
             Y_t = torch.squeeze(Y_t, dim=0)
             # combine current word embedding with previous o which is attention weighted encoder hiddenstates
-            Ybar_t = torch.concat((Y_t, o_prev), dim=-1)
+            Ybar_t = torch.concat((Y_t, o_prev), dim=1)
             assert Ybar_t.shape[0] == batch_size and Ybar_t.shape[1] == self.model_embeddings.embed_size+self.hidden_size
             dec_state, o_t, e_t = self.step(Ybar_t, dec_state, enc_hiddens, enc_hiddens_proj, enc_masks)
             assert len(dec_state) == 2
             assert o_t.shape[0] == batch_size and o_t.shape[1] == self.hidden_size
-            ## sanity check attention score
-            #assert e_t.shape[0] == batch_size and e_t.shape[1] == src_len
-            #assert abs(sum(sum(e_t, dim=1) - torch.ones(batch_size)).numpy()) <= 0.001
             combined_outputs.append(o_t)
             o_prev = o_t
 
-        # stack all output together into a tensor
-        for i in range(len(combined_outputs)):
-            combined_outputs[i] = torch.unsqueeze(combined_outputs[i], dim=0)
-        combined_outputs_stack = torch.cat(combined_outputs)
-        combined_outputs = combined_outputs_stack
-        assert len(list(combined_outputs.shape)) == 3 and combined_outputs.shape[0] == target_padded.shape[0] and combined_outputs.shape[1] == batch_size and combined_outputs.shape[2] == self.hidden_size
+        combined_outputs = torch.stack(combined_outputs)
         ### END YOUR CODE
 
         return combined_outputs
@@ -402,16 +387,15 @@ class NMT(nn.Module):
         # apply decoder to obtain new dec_state, input is ybar_t, concatenated hidden state and attention output from encoder
         dec_state = self.decoder(Ybar_t, dec_state)
         # split the new state into hidden and cell
-        new_dec_hidden, new_dec_cell = dec_state[0], dec_state[1]
+        dec_hidden, dec_cell = dec_state[0], dec_state[1]
         # calculate attention score
         # unsqueeze and expand new_dec_hidden into 3d
-        new_dec_hidden_3d = torch.unsqueeze(new_dec_hidden, dim = -1)
-        assert new_dec_hidden_3d.shape[0] == batch_size and new_dec_hidden_3d.shape[1] == hidden_size and new_dec_hidden_3d.shape[2] == 1 
+        dec_hidden_3d = torch.unsqueeze(dec_hidden, dim = -1)
+        assert dec_hidden_3d.shape[0] == batch_size and dec_hidden_3d.shape[1] == hidden_size and dec_hidden_3d.shape[2] == 1 
         ## conduct batch matrix multiplication
-        e_t = torch.bmm(enc_hiddens_proj, new_dec_hidden_3d)
+        e_t = torch.bmm(enc_hiddens_proj, dec_hidden_3d)
         assert len(list(e_t.shape)) == 3 and e_t.shape[0] == enc_hiddens.shape[0] and e_t.shape[1] == enc_hiddens.shape[1] and e_t.shape[-1] == 1
         e_t = torch.squeeze(e_t, dim = -1)
-        ### END YOUR CODE
 
         # Set e_t to -inf where enc_masks has 1
         if enc_masks is not None:
@@ -444,37 +428,20 @@ class NMT(nn.Module):
         ###         https://pytorch.org/docs/stable/generated/torch.tanh.html
 
         # normalize e_t to get alpha_t
-        sm = torch.nn.Softmax(dim = -1)
-        alpha_t = sm(e_t)
-        assert alpha_t.shape[0] == batch_size and alpha_t.shape[1] == enc_hiddens.shape[1]
-        
-        ## Use batched matrix multiplication between alpha_t and enc_hiddens to obtain the attention output vector, a_t.
-        alpha_t_3d = torch.unsqueeze(alpha_t, dim = 1)
-        assert alpha_t_3d.shape[0] == batch_size and alpha_t_3d.shape[1] == 1 and alpha_t_3d.shape[2] == alpha_t.shape[-1]
-        
-        # bmm
-        # bx1xsrc   bxsrcx2h
-        a_t = torch.bmm(alpha_t_3d, enc_hiddens)
+        alpha_t = torch.unsqueeze(F.softmax(e_t, dim=1), dim = 1)
+        #print(alpha_t.shape, enc_hiddens.shape)
+        a_t = torch.bmm(alpha_t, enc_hiddens)
         # bx1x2h
         a_t = torch.squeeze(a_t, dim = 1)
         assert a_t.shape[0] == batch_size and a_t.shape[1] == 2*hidden_size
-        assert len(list(a_t.shape)) == 2 and a_t.shape[0] == enc_hiddens.shape[0] and a_t.shape[1] == 2*enc_hiddens_proj.shape[2]
-
-        # concatenate h_t with a_t, u_t [b, 3*h], basically expanding feature space by incorporating both attended hidden states of bidirectional encoders and hidden state of current decoder
-        u_t = torch.concat((a_t, new_dec_hidden), dim = -1)
-        assert len(list(u_t.shape)) == 2 and u_t.shape[0] == batch_size and u_t.shape[1] == 3*enc_hiddens_proj.shape[2]
-        
-        # linear combined output projection
-        v_t = self.combined_output_projection(u_t)
-        assert len(list(v_t.shape)) == 2 and v_t.shape[0] == batch_size and v_t.shape[1] == hidden_size
-        # obtain final combined embedding
-        tanh = torch.nn.Tanh()
-        O_t = self.dropout(tanh(v_t))
-        ### END YOUR CODE
-        # combined output is what is extra for this attention based setup compared to vanilla LSTM
+        U_t = torch.cat((a_t, dec_hidden), 1)
+        V_t = self.combined_output_projection(U_t)
+        O_t = self.dropout(torch.tanh(V_t))
         combined_output = O_t
-        assert e_t != None
+        
         return dec_state, combined_output, e_t
+
+
 
     def generate_sent_masks(self, enc_hiddens: torch.Tensor, source_lengths: List[int]) -> torch.Tensor:
         """ Generate sentence masks for encoder hidden states.

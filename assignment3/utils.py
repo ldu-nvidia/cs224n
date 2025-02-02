@@ -30,6 +30,15 @@ def pad_sents(sents, pad_token):
     sents_padded = []
 
     ### YOUR CODE HERE (~6 Lines)
+    max_len = max([len(sent) for sent in sents])
+    for sent in sents:
+        sent_len = len(sent)
+        sents_padded.append(sent + (max_len - sent_len) * [pad_token])
+        ### END YOUR CODE
+
+    return sents_padded
+    
+    '''
     longest_sentence_length = max([len(sentence) for sentence in sents])
     for sentence in sents:
         for i in range(longest_sentence_length - len(sentence)):
@@ -39,10 +48,7 @@ def pad_sents(sents, pad_token):
     assert len(sents) == len(sents_padded)
     for sentence in sents_padded:
         assert len(sentence) == longest_sentence_length
-    ### END YOUR CODE
-
-    return sents_padded
-
+    '''
 
 def read_corpus(file_path, source, vocab_size=2500):
     """ Read file, where each sentence is dilineated by a `\n`.
