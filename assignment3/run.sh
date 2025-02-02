@@ -1,7 +1,7 @@
 #!/bin/bash
 
 if [ "$1" = "train" ]; then
-	CUDA_VISIBLE_DEVICES=0 python run.py train --train-src=./zh_en_data/train.zh --train-tgt=./zh_en_data/train.en --dev-src=./zh_en_data/dev.zh --dev-tgt=./zh_en_data/dev.en --vocab=vocab.json --cuda --lr=1e-3 --patience=5 --valid-niter=100 --batch-size=128 --dropout=.3
+	CUDA_VISIBLE_DEVICES=0 python run.py train --train-src=./zh_en_data/train.zh --train-tgt=./zh_en_data/train.en --dev-src=./zh_en_data/dev.zh --dev-tgt=./zh_en_data/dev.en --vocab=vocab.json --cuda --lr=5e-4 --patience=10 --valid-niter=100 --batch-size=32 --dropout=.3
 elif [ "$1" = "test" ]; then
 	CUDA_VISIBLE_DEVICES=0 python run.py decode model.bin ./zh_en_data/test.zh ./zh_en_data/test.en outputs/test_outputs.txt --cuda
 elif [ "$1" = "dev" ]; then

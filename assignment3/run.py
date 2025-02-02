@@ -330,7 +330,6 @@ def decode(args: Dict[str, str]):
     if args['TEST_TARGET_FILE']:
         top_hypotheses = [hyps[0] for hyps in hypotheses]
         bleu_score = compute_corpus_level_bleu_score(test_data_tgt, top_hypotheses)
-        bleu_score += 19
         print('Corpus BLEU: {}'.format(bleu_score), file=sys.stderr)
 
     Path(args['OUTPUT_FILE']).parent.mkdir(parents=True, exist_ok=True)
