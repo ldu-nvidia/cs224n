@@ -66,7 +66,7 @@ model = None
 if args.variant == 'vanilla':
     # TODO: [part c] Make some model here
     ### YOUR CODE HERE ###
-    pass
+    model = models.GPT(mconf)
     ### END YOUR CODE ###
 elif args.variant == 'rope':
     # TODO: [part g] Make some other model here
@@ -102,7 +102,26 @@ if args.function == 'pretrain':
     # writer=writer
 
     ### YOUR CODE HERE ###
-    pass
+    tconf = trainer.TrainerConfig(
+        max_epochs=650,
+        batch_size=128,
+        learning_rate=args.finetune_lr,
+        lr_decay=True,
+        warmup_tokens=512*20,
+        final_tokens=200*len(pretrain_dataset)*block_size,
+        num_workers=0 if device == 'cpu' else 4,
+        writer=writer,
+    )
+
+    with open(args.pretrain_corpus_path, encoding='utf-8') as f:
+        train_dataset = dataset.CharCorruptionDataset(data=f.read(), block_size=block_size)
+    eval_dataset = None
+    if args.eval_corpus_path is not None:
+        with open(args.eval_corpus_path, encoding='utf-8') as f:
+            eval_dataset = dataset.CharCorruptionDataset(data=f.read(), block_size=block_size)
+
+    trainer.Trainer(model, train_dataset, eval_dataset, tconf).train()
+    torch.save(model.state_dict(), args.writing_params_path)
     ### END YOUR CODE ###
 elif args.function == 'finetune':
     assert args.writing_params_path is not None
@@ -141,8 +160,34 @@ elif args.function == 'finetune':
     #     number of epochs for each case.
 
     ### YOUR CODE HERE ###
-    pass
+    max_epochs = 75
+    if args.reading_params_path is not None:
+        model.load_state_dict(torch.load(args.reading_params_path))
+        max_epochs = 10
+
+    tconf = trainer.TrainerConfig(
+        max_epochs=max_epochs,
+        batch_size=256,
+        learning_rate=args.finetune_lr,
+        lr_decay=True,
+        warmup_tokens=512*20,
+        final_tokens=200*len(pretrain_dataset)*block_size,
+        num_workers=0 if device == 'cpu' else 0,
+        writer=writer,
+    )
+
+    with open(args.finetune_corpus_path, encoding='utf-8') as f:
+        train_dataset = dataset.NameDataset(pretraining_dataset=pretrain_dataset, data=f.read())
+    eval_dataset = None
+    if args.eval_corpus_path is not None:
+        with open(args.eval_corpus_path, encoding='utf-8') as f:
+            eval_dataset = dataset.NameDataset(pretraining_dataset=pretrain_dataset, data=f.read())
+
+    trainer.Trainer(model, train_dataset, eval_dataset, tconf).train()
+    torch.save(model.state_dict(), args.writing_params_path)
     ### END YOUR CODE ###
+
+
 elif args.function == 'evaluate':
     assert args.outputs_path is not None
     assert args.reading_params_path is not None
@@ -157,7 +202,7 @@ elif args.function == 'evaluate':
             x = x + '⁇'
             x = torch.tensor([pretrain_dataset.stoi[s] for s in x],
                              dtype=torch.long)[None,...].to(device)
-            pred = utils.sample(model, x, 32, sample=False)[0]
+            pred = utils.sample(model.to(device), x, 32, sample=False)[0]
             completion = ''.join([pretrain_dataset.itos[int(i)] for i in pred])
             pred = completion.split('⁇')[1]
             predictions.append(pred)

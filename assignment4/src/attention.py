@@ -38,7 +38,17 @@ def precompute_rotary_emb(dim, max_positions):
     rope_cache = None
     # TODO: [part g]
     ### YOUR CODE HERE ###
-    pass
+
+    assert dim % 2 == 0
+
+    theta_i = torch.tensor([1 / 10000 ** (2 * (i-1) / dim) for i in range(1, dim // 2 + 1)])    # shape (dim/2, )
+    t = torch.arange(max_positions).unsqueeze(dim=1)    # shape (max_positions, 1)
+    t_theta_2d = t * theta_i    # broadcast to shape (max_positions, dim/2)
+
+    cos_layer = torch.cos(t_theta_2d).unsqueeze(dim=0)
+    sin_layer = torch.sin(t_theta_2d).unsqueeze(dim=0)
+
+    rope_cache = torch.cat((cos_layer, sin_layer), dim=0).permute(1, 2, 0).contiguous() # shape (max_positions, dim/2, 2)
     ### END YOUR CODE ###
     return rope_cache
 
@@ -58,7 +68,32 @@ def apply_rotary_emb(x, rope_cache):
 
     rotated_x = None
     ### YOUR CODE HERE ###
-    pass
+    B, H, T, dim = x.shape # batch size, head number, seq len, head dim
+
+    # reshape x for efficient RoPE operation
+    # shape in (B, H, T, dim) -> shape out (B, H, T, dim/2, 2)
+    # x_cut = torch.unflatten(x, -1, (-1, 2))    
+    x_cut = x.reshape(B, H, T, dim // 2, 2)
+
+    # reshape x to complex view
+    # shape in (B, H, T, dim/2, 2) -> shape out (B, H, T, dim/2)
+    x_comp_view = torch.view_as_complex(x_cut) 
+
+    # truncate rope cache and add 2 dims to align the shape of x
+    # shape in (max_positions, dim/2, 2) -> shape out (1, 1, T, dim/2, 2)
+    rope_cache = rope_cache[:T] 
+
+    # reshape rope_cache to complex view
+    angle_comp_view = torch.view_as_complex(rope_cache)  # shape out (1, 1, T, dim/2)
+
+    # element_wise multiplication
+    rope_comp_view = angle_comp_view * x_comp_view       # shape out (B, H, T, dim/2)
+
+    # change to real view
+    rope = torch.view_as_real(rope_comp_view)            # shape out (B, H, T, dim/2, 2)
+
+    # reshape
+    rotated_x = rope.reshape(B, H, T, -1)                # shape out (B, H, T, dim)
     ### END YOUR CODE ###
     return rotated_x
 

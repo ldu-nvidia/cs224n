@@ -12,7 +12,8 @@ def main():
 
     # Compute accuracy in the range [0.0, 100.0]
     ### YOUR CODE HERE ###
-    pass
+    total, correct = utils.evaluate_places("birth_dev.tsv", ["London"] * 500)
+    print('Correct: {} out of {}: {}%'.format(correct, total, correct/total*100))
     ### END YOUR CODE ###
 
     return accuracy
