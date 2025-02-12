@@ -48,7 +48,7 @@ def precompute_rotary_emb(dim, max_positions):
     cos_layer = torch.cos(t_theta_2d).unsqueeze(dim=0)
     sin_layer = torch.sin(t_theta_2d).unsqueeze(dim=0)
 
-    rope_cache = torch.cat((cos_layer, sin_layer), dim=0).permute(1, 2, 0).contiguous() # shape (max_positions, dim/2, 2)
+    rope_cache = torch.cat((cos_layer, -1.0*sin_layer), dim=0).permute(1, 2, 0).contiguous() # shape (max_positions, dim/2, 2)
     ### END YOUR CODE ###
     return rope_cache
 
@@ -121,8 +121,9 @@ class CausalSelfAttention(nn.Module):
             # Hint: The maximum sequence length is given by config.block_size.
             rope_cache = None
             ### YOUR CODE HERE ###
-            pass
-            ### END YOUR CODE ###
+            head_dim = config.n_embd // config.n_head   # k, q in all heads share the same rope_cache
+            max_positions = config.block_size 
+            rope_cache = precompute_rotary_emb(head_dim, max_positions)
 
             self.register_buffer("rope_cache", rope_cache)
 
@@ -145,10 +146,8 @@ class CausalSelfAttention(nn.Module):
         v = self.value(x).view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
 
         if self.rope:
-            # TODO: [part g] Apply RoPE to the query and key.
-            ### YOUR CODE HERE ###
-            pass
-            ### END YOUR CODE ###
+            q = apply_rotary_emb(q, self.rope_cache)
+            k = apply_rotary_emb(k, self.rope_cache)
 
         # causal self-attention; Self-attend: (B, nh, T, hs) x (B, nh, hs, T) -> (B, nh, T, T)
         att = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(k.size(-1)))
