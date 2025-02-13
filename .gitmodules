@@ -1,0 +1,3 @@
+[submodule "gpt-2_final_project"]
+	path = gpt-2_final_project
+	url = https://github.com/cfifty/public_cs224n_gpt
