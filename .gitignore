@@ -1,4 +1,6 @@
 final_project/final_env/
 final_project/data/
-**/__pycache__/
+final_project/__pycache__/
+final_project/modules/__pycache__/
 *.zip
+ls
