@@ -55,6 +55,8 @@ class GPT2SentimentClassifier(torch.nn.Module):
 
     ### TODO: Create any instance variables you need to classify the sentiment of BERT embeddings.
     ### YOUR CODE HERE
+    # dropout before linear
+    self.dropout = torch.nn.Dropout(0.3)
     # need final linear layer to map hidden size to number of classes
     self.last_linear_layer = torch.nn.Linear(self.gpt.config.hidden_size, self.num_labels)
 
@@ -67,10 +69,13 @@ class GPT2SentimentClassifier(torch.nn.Module):
     ###       the training loop currently uses F.cross_entropy as the loss function.
     ### YOUR CODE HERE
     gpt_output = self.gpt(input_ids, attention_mask)
-    # take the first/[cls] token as the contextualized embedding
-    contexualized_emb = gpt_output['last_hidden_state'][:, 0, :]
+    # should be last token, which has seen all previous tokens
+    contexualized_emb = gpt_output['last_hidden_state'][:, -1, :]
+    #print("contextualized emb", contexualized_emb.shape)
     # normalized multiclass probability
-    return F.softmax(self.last_linear_layer(contexualized_emb), dim=1)
+    logits = self.last_linear_layer(self.dropout(contexualized_emb))
+    print("logits", logits)
+    return logits
 
 class SentimentDataset(Dataset):
   def __init__(self, dataset, args):
@@ -245,7 +250,6 @@ def save_model(model, optimizer, args, config, filepath):
 
 def train(args):
   device = torch.device('cuda') if args.use_gpu else torch.device('cpu')
-  print("device used during training", device)
   # Create the data and its corresponding datasets and dataloader.
   train_data, num_labels = load_data(args.train, 'train')
   dev_data = load_data(args.dev, 'valid')
@@ -289,7 +293,10 @@ def train(args):
 
       optimizer.zero_grad()
       logits = model(b_ids, b_mask).to(device)
+      #print("logits is", logits)
+      #print("label ", b_labels)
       loss = F.cross_entropy(logits, b_labels.view(-1), reduction='sum') / args.batch_size
+      #print("loss is", loss)
 
       loss.backward()
       optimizer.step()
@@ -312,7 +319,7 @@ def train(args):
 def test(args):
   with torch.no_grad():
     device = torch.device('cuda') if args.use_gpu else torch.device('cpu')
-    saved = torch.load(args.filepath)
+    saved = torch.load(args.filepath, weights_only=False)
     config = saved['model_config']
     model = GPT2SentimentClassifier(config)
     model.load_state_dict(saved['model'])
