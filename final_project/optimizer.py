@@ -4,6 +4,7 @@ import math
 import torch
 from torch.optim import Optimizer
 
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 class AdamW(Optimizer):
     # params: named or unnamed tensor or dicts, specifies what tensors should be optimized
@@ -48,12 +49,13 @@ class AdamW(Optimizer):
 
                 # State should be stored in this dictionary.
                 state = self.state[p]
+                ## need to put these states on device to trigger GPU compute
                 if "first_momentum" not in state:
-                    state["first_momentum"] = torch.zeros(p.grad.shape)
+                    state["first_momentum"] = torch.zeros(p.grad.shape).to(device)
                 if "second_momentum" not in state:
-                    state["second_momentum"] = torch.zeros(p.grad.shape)
+                    state["second_momentum"] = torch.zeros(p.grad.shape).to(device)
                 if "time_step" not in state:
-                    state["time_step"] = 0
+                    state["time_step"] = torch.tensor(0, dtype=torch.int).to(device)
 
                 # Access hyperparameters from the `group` dictionary.
                 alpha = group["lr"]
@@ -78,15 +80,16 @@ class AdamW(Optimizer):
                 # update time step
                 state["time_step"] += 1
                 #print("p grad", p.grad)
-                state["first_momentum"] = group["betas"][0]*state["first_momentum"] + (1 - group["betas"][0])*p.grad
+                state["first_momentum"] = group["betas"][0]*state["first_momentum"] + (torch.tensor(1.0) - group["betas"][0])*p.grad
                 #print("first momentum", first_momentum)
                 
                 # update biased second momentum estimate
-                state["second_momentum"] = group["betas"][1]*state["second_momentum"] + (1 - group["betas"][1])*pow(p.grad, 2)
+                state["second_momentum"] = group["betas"][1]*state["second_momentum"] + (torch.tensor(1.0) - torch.tensor(group["betas"][1]))*pow(p.grad, 2)
+
                 #print("second momentum", second_momentum)
                 # adaptive learning rate
                 #print("time step", state["time_step"])
-                alpha_t = alpha * math.sqrt(1.0 - pow(group["betas"][1], state["time_step"]))/(1.0 - pow(group["betas"][0], state["time_step"]))
+                alpha_t = alpha * math.sqrt(torch.tensor(1.0) - pow(group["betas"][1], state["time_step"]))/(torch.tensor(1.0) - pow(group["betas"][0], state["time_step"]))
                 #print("alpha_t", alpha_t)
                 # update certain parameter by adaptive gradient, first momentum smooth the DIRECTION of gradient, prevent noisy gradient direction
                 # second momentum scale the MAGNITUDE of gradient, accelerate direction of small gradient magnitude and decelerate direction of large gradient
@@ -95,5 +98,4 @@ class AdamW(Optimizer):
                 # update parameter by weight decay as regularization term
                 p.data -= alpha_t * group["weight_decay"] * p.data
                 #print("p data", p.data)
-
         return loss
