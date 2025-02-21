@@ -68,14 +68,12 @@ class GPT2SentimentClassifier(torch.nn.Module):
     ###       HINT: You should consider what is an appropriate return value given that
     ###       the training loop currently uses F.cross_entropy as the loss function.
     ### YOUR CODE HERE
-    gpt_output = self.gpt(input_ids, attention_mask)
     # should be last token, which has seen all previous tokens
-    contexualized_emb = gpt_output['last_hidden_state'][:, -1, :]
-    #print("contextualized emb", contexualized_emb.shape)
-    # normalized multiclass probability
-    logits = self.last_linear_layer(self.dropout(contexualized_emb))
-    print("logits", logits)
-    return logits
+    #logit = self.gpt.hidden_state_to_token(self.gpt(input_ids, attention_mask)['last_token'])
+    # map from logit: hidden_size to number of classes for sentiment classification
+    last_token_hidden = self.gpt(input_ids, attention_mask)['last_token']
+    
+    return self.last_linear_layer(self.dropout(last_token_hidden))
 
 class SentimentDataset(Dataset):
   def __init__(self, dataset, args):
@@ -275,9 +273,14 @@ def train(args):
   model = model.to(device)
 
   lr = args.lr
-  optimizer = AdamW(model.parameters(), lr=lr)
-  best_dev_acc = 0
+  # use customized optimizer
+  #optimizer = AdamW(model.parameters(), lr=lr)
+  
+  # use off the shelf optimizer
+  optimizer = torch.optim.Adam(model.parameters(), lr=lr)
 
+  best_dev_acc = 0
+  best_train_acc = 0
   # Run for the specified number of epochs.
   for epoch in range(args.epochs):
     model.train()
@@ -309,6 +312,7 @@ def train(args):
     train_acc, train_f1, *_ = model_eval(train_dataloader, model, device)
     dev_acc, dev_f1, *_ = model_eval(dev_dataloader, model, device)
 
+    # using dev accuracy to save model
     if dev_acc > best_dev_acc:
       best_dev_acc = dev_acc
       save_model(model, optimizer, args, config, args.filepath)

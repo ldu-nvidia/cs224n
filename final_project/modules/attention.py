@@ -47,7 +47,6 @@ class CausalSelfAttention(nn.Module):
     attention_weight = self.dropout(torch.softmax(attention_score, dim=-1))
     # Compute final attention output
     attn_value = attention_weight @ value
-
     # combine multihead into one head
     attn_value = rearrange(attn_value, 'b t h d -> b h (t d)')
     return attn_value

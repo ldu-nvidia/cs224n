@@ -33,7 +33,6 @@ class GPT2Model(GPTPreTrainedModel):
 
     # GPT-2 layers.
     self.gpt_layers = nn.ModuleList([GPT2Layer(config) for _ in range(config.num_hidden_layers)])
-    #self.gpt_layers = nn.ModuleList([GPT2Layer(config) for _ in range(2)])
 
     # [CLS] token transformations.
     self.pooler_dense = nn.Linear(config.hidden_size, config.hidden_size)
@@ -92,12 +91,11 @@ class GPT2Model(GPTPreTrainedModel):
     
     # Apply final layer normalization
     sequence_output = self.final_layer_norm(sequence_output)
+    
+    # special processing for last token
+    #last_token = self.pooler_af(self.pooler_dense(sequence_output[:, -1]))
 
-    # Get the hidden state of the final token.
-    last_non_pad_idx = attention_mask.sum(dim=1) - 1  # Subtract 1 to get last index
-    last_token = sequence_output[torch.arange(sequence_output.shape[0]), last_non_pad_idx]
-
-    return {'last_hidden_state': sequence_output, 'last_token': last_token}
+    return {'last_hidden_state': sequence_output, 'last_token': sequence_output[:, -1]}
 
   def hidden_state_to_token(self, hidden_state):
     """
@@ -106,8 +104,13 @@ class GPT2Model(GPTPreTrainedModel):
 
       return hidden_state(s) * E^T
     """
-    ### YOUR CODE HERE
-    raise NotImplementedError
+    # dot product between hidden state at certain time step with embedding matrix W_e (vocab_size, embedding_dim) represents
+    # similarity of hidden state and token embedding, which is logit is used to make prediction for next token
+    input_embedding = self.word_embedding.weight
+    #print("weight matrix of input embedding", input_embedding, input_embedding.shape)
+    logit = hidden_state@input_embedding.T
+    #print("logit shape", logit.shape)
+    return logit
 
 
   @classmethod
