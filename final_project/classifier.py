@@ -274,10 +274,10 @@ def train(args):
 
   lr = args.lr
   # use customized optimizer
-  #optimizer = AdamW(model.parameters(), lr=lr)
+  optimizer = AdamW(model.parameters(), lr=lr)
   
   # use off the shelf optimizer
-  optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+  #optimizer = torch.optim.Adam(model.parameters(), lr=lr)
 
   best_dev_acc = 0
   best_train_acc = 0

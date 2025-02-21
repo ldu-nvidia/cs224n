@@ -79,23 +79,16 @@ class AdamW(Optimizer):
                 # update biased first momentum estimate
                 # update time step
                 state["time_step"] += 1
-                #print("p grad", p.grad)
                 state["first_momentum"] = group["betas"][0]*state["first_momentum"] + (1.0 - group["betas"][0])*grad
-                #print("first momentum", first_momentum)
                 
                 # update biased second momentum estimate
                 state["second_momentum"] = group["betas"][1]*state["second_momentum"] + (1.0 - torch.tensor(group["betas"][1]))*torch.pow(grad, 2)
 
-                #print("second momentum", second_momentum)
                 # adaptive learning rate
-                #print("time step", state["time_step"])
                 alpha_t = alpha * math.sqrt(1.0 - pow(group["betas"][1], state["time_step"]))/(1.0 - pow(group["betas"][0], state["time_step"]))
-                #print("alpha_t", alpha_t)
                 # update certain parameter by adaptive gradient, first momentum smooth the DIRECTION of gradient, prevent noisy gradient direction
                 # second momentum scale the MAGNITUDE of gradient, accelerate direction of small gradient magnitude and decelerate direction of large gradient
                 p.data -= alpha_t * state["first_momentum"]/(state["second_momentum"].sqrt() + group["eps"])
-                #print("p data", p.data)
-                # update parameter by weight decay as regularization term
-                p.data -= alpha_t * group["weight_decay"] * p.data
-                #print("p data", p.data)
+                # coefficient should be alpha instead of alpha_t for parameter regularization
+                p.data -= alpha * group["weight_decay"] * p.data
         return loss
