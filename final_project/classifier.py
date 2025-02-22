@@ -275,9 +275,6 @@ def train(args):
   lr = args.lr
   # use customized optimizer
   optimizer = AdamW(model.parameters(), lr=lr)
-  
-  # use off the shelf optimizer
-  #optimizer = torch.optim.Adam(model.parameters(), lr=lr)
 
   best_dev_acc = 0
   best_train_acc = 0
@@ -296,10 +293,8 @@ def train(args):
 
       optimizer.zero_grad()
       logits = model(b_ids, b_mask).to(device)
-      #print("logits is", logits)
-      #print("label ", b_labels)
+
       loss = F.cross_entropy(logits, b_labels.view(-1), reduction='sum') / args.batch_size
-      #print("loss is", loss)
 
       loss.backward()
       optimizer.step()
@@ -310,7 +305,7 @@ def train(args):
     train_loss = train_loss / (num_batches)
 
     train_acc, train_f1, *_ = model_eval(train_dataloader, model, device)
-    dev_acc, dev_f1, *_ = model_eval(dev_dataloader, model, device)
+    dev_acc, dev_f1, *_ = model_eval(train_dataloader, model, device)
 
     # using dev accuracy to save model
     if dev_acc > best_dev_acc:

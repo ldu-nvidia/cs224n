@@ -51,11 +51,11 @@ class AdamW(Optimizer):
                 state = self.state[p]
                 ## need to put these states on device to trigger GPU compute
                 if "first_momentum" not in state:
-                    state["first_momentum"] = torch.zeros(p.grad.shape, dtype=torch.float32)#.to(device)
+                    state["first_momentum"] = torch.zeros(p.grad.shape, dtype=torch.float32).to(device)
                 if "second_momentum" not in state:
-                    state["second_momentum"] = torch.zeros(p.grad.shape, dtype=torch.float32)#.to(device)
+                    state["second_momentum"] = torch.zeros(p.grad.shape, dtype=torch.float32).to(device)
                 if "time_step" not in state:
-                    state["time_step"] = torch.tensor(0, dtype=torch.int)#.to(device)
+                    state["time_step"] = torch.tensor(0, dtype=torch.int).to(device)
 
                 # Access hyperparameters from the `group` dictionary.
                 alpha = group["lr"]
