@@ -91,11 +91,11 @@ class GPT2Model(GPTPreTrainedModel):
     
     # Apply final layer normalization
     sequence_output = self.final_layer_norm(sequence_output)
-    
-    # special processing for last token
-    #last_token = self.pooler_af(self.pooler_dense(sequence_output[:, -1]))
 
-    return {'last_hidden_state': sequence_output, 'last_token': sequence_output[:, -1]}
+    # last token is not the last element, but the last UNPADDED token, hence need attention mask to calculate the index
+    last_token = sequence_output[torch.arange(sequence_output.size(0)), attention_mask.sum(dim=1)-1, :]
+
+    return {'last_hidden_state': sequence_output, 'last_token': last_token}
 
   def hidden_state_to_token(self, hidden_state):
     """
