@@ -107,9 +107,7 @@ class GPT2Model(GPTPreTrainedModel):
     # dot product between hidden state at certain time step with embedding matrix W_e (vocab_size, embedding_dim) represents
     # similarity of hidden state and token embedding, which is logit is used to make prediction for next token
     input_embedding = self.word_embedding.weight
-    #print("weight matrix of input embedding", input_embedding, input_embedding.shape)
     logit = hidden_state@input_embedding.T
-    #print("logit shape", logit.shape)
     return logit
 
 

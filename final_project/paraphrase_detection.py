@@ -19,7 +19,7 @@ import numpy as np
 import torch.nn.functional as F
 
 from torch import nn
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, RandomSampler
 from tqdm import tqdm
 
 from datasets import (
@@ -71,9 +71,9 @@ class ParaphraseGPT(nn.Module):
     """
 
     'Takes a batch of sentences and produces embeddings for them.'
-    ### YOUR CODE HERE
-    raise NotImplementedError
+    last_token_hidden = self.gpt(input_ids, attention_mask)['last_token']
 
+    return self.gpt.hidden_state_to_token(last_token_hidden)
 
 
 def save_model(model, optimizer, args, filepath):
@@ -99,6 +99,10 @@ def train(args):
 
   para_train_data = ParaphraseDetectionDataset(para_train_data, args)
   para_dev_data = ParaphraseDetectionDataset(para_dev_data, args)
+
+  # only train on a subset of training data
+  #train_sampler = RandomSampler(para_train_data, num_samples=1000)
+  #dev_sampler = RandomSampler(para_dev_data, num_samples=1000)
 
   para_train_dataloader = DataLoader(para_train_data, shuffle=True, batch_size=args.batch_size,
                                      collate_fn=para_train_data.collate_fn)
@@ -127,9 +131,10 @@ def train(args):
 
       # Compute the loss, gradients, and update the model's parameters.
       optimizer.zero_grad()
-      logits = model(b_ids, b_mask)
+      logits = model(b_ids, b_mask).to(device)
+      print(logits, logits.shape)
       preds = torch.argmax(logits, dim=1)
-      loss = F.cross_entropy(logits, labels, reduction='mean')
+      loss = F.cross_entropy(logits, labels, reduction='mean').to(device)
       loss.backward()
       optimizer.step()
 
@@ -144,14 +149,14 @@ def train(args):
       best_dev_acc = dev_acc
       save_model(model, optimizer, args, args.filepath)
 
-    print(f"Epoch {epoch}: train loss :: {train_loss :.3f}, dev acc :: {dev_acc :.3f}")
+    print(f"Epoch {epoch}: train loss :: {train_loss :.5f}, train acc :: {train_acc :.5f}, dev acc :: {dev_acc :.5f}")
 
 
 @torch.no_grad()
 def test(args):
   """Evaluate your model on the dev and test datasets; save the predictions to disk."""
   device = torch.device('cuda') if args.use_gpu else torch.device('cpu')
-  saved = torch.load(args.filepath)
+  saved = torch.load(args.filepath, weights_only=False)
 
   model = ParaphraseGPT(saved['args'])
   model.load_state_dict(saved['model'])
