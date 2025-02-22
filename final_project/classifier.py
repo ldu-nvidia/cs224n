@@ -305,14 +305,14 @@ def train(args):
     train_loss = train_loss / (num_batches)
 
     train_acc, train_f1, *_ = model_eval(train_dataloader, model, device)
-    dev_acc, dev_f1, *_ = model_eval(train_dataloader, model, device)
+    dev_acc, dev_f1, *_ = model_eval(dev_dataloader, model, device)
 
     # using dev accuracy to save model
     if dev_acc > best_dev_acc:
       best_dev_acc = dev_acc
       save_model(model, optimizer, args, config, args.filepath)
 
-    print(f"Epoch {epoch}: train loss :: {train_loss :.3f}, train acc :: {train_acc :.3f}, dev acc :: {dev_acc :.3f}")
+    print(f"Epoch {epoch}: train loss :: {train_loss :.5f}, train acc :: {train_acc :.5f}, dev acc :: {dev_acc :.5f}")
 
 
 def test(args):
