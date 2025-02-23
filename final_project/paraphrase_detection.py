@@ -72,7 +72,10 @@ class ParaphraseGPT(nn.Module):
 
     'Takes a batch of sentences and produces embeddings for them.'
     last_token_hidden = self.gpt(input_ids, attention_mask)['last_token']
-
+    # two ways of doing classifications
+    # 1. adding a linear layer from hidden to # of classes with extra parameter to learn from
+    # 2. use hidden state of last unpadded token to predict what the next token would be: yes/no or even more complex token
+    ## no extra classification head needed
     return self.gpt.hidden_state_to_token(last_token_hidden)
 
 
@@ -104,7 +107,7 @@ def train(args):
   #train_sampler = RandomSampler(para_train_data, num_samples=1000)
   #dev_sampler = RandomSampler(para_dev_data, num_samples=1000)
 
-  para_train_dataloader = DataLoader(para_train_data, shuffle=True, batch_size=args.batch_size,
+  para_train_dataloader = DataLoader(para_train_data, shuffle=False, batch_size=args.batch_size,
                                      collate_fn=para_train_data.collate_fn)
   para_dev_dataloader = DataLoader(para_dev_data, shuffle=False, batch_size=args.batch_size,
                                    collate_fn=para_dev_data.collate_fn)
@@ -132,7 +135,6 @@ def train(args):
       # Compute the loss, gradients, and update the model's parameters.
       optimizer.zero_grad()
       logits = model(b_ids, b_mask).to(device)
-      print(logits, logits.shape)
       preds = torch.argmax(logits, dim=1)
       loss = F.cross_entropy(logits, labels, reduction='mean').to(device)
       loss.backward()
@@ -142,14 +144,13 @@ def train(args):
       num_batches += 1
 
     train_loss = train_loss / num_batches
-
     dev_acc, dev_f1, *_ = model_eval_paraphrase(para_dev_dataloader, model, device)
 
     if dev_acc > best_dev_acc:
       best_dev_acc = dev_acc
       save_model(model, optimizer, args, args.filepath)
 
-    print(f"Epoch {epoch}: train loss :: {train_loss :.5f}, train acc :: {train_acc :.5f}, dev acc :: {dev_acc :.5f}")
+    print(f"Epoch {epoch}: train loss :: {train_loss :.5f}, dev acc :: {dev_acc :.5f}")
 
 
 @torch.no_grad()
