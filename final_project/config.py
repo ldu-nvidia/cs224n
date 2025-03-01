@@ -187,13 +187,15 @@ class PretrainedConfig(object):
 
 class GPT2Config(PretrainedConfig):
   model_type = "gpt"
-
   def __init__(
           self,
           vocab_size=50257,
-          hidden_size=768,
-          num_hidden_layers=12,
-          num_attention_heads=12,
+          #hidden_size=768,
+          hidden_size=1024,
+          #num_hidden_layers=12,
+          num_hidden_layers=24,
+          #num_attention_heads=12,
+          num_attention_heads=24,
           intermediate_size=3072,
           hidden_act="gelu",
           hidden_dropout_prob=0.1,

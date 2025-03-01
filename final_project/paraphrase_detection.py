@@ -32,6 +32,12 @@ from models.gpt2 import GPT2Model
 
 from optimizer import AdamW
 
+# extension
+
+from peft import LoraConfig, get_peft_model
+from transformers import Trainer, TrainingArguments
+
+
 TQDM_DISABLE = False
 
 # Fix the random seed.
@@ -93,6 +99,40 @@ def save_model(model, optimizer, args, filepath):
   print(f"save the model to {filepath}")
 
 
+def get_peft_model(model):
+  config = LoraConfig(
+    r=16,
+    lora_alpha=16,
+    target_modules=["query", "value"],
+    lora_dropout=0.1,
+    bias="none",
+    ## list of modules apart from adapter layers to be set as trainable and saved
+    ## in final checkpoint
+    modules_to_save=["paraphrase_detection_head.weight", 
+    "paraphrase_detection_head.bias"],
+  )
+  peft_model = get_peft_model(model, config)
+  paft_model.print_trainable_parameters()
+  return peft_model
+
+def get_peft_training_args():
+  return TrainingArguments(
+    output_dir='./results',  # where to save results
+    evaluation_strategy="epoch",  # evaluate after each epoch
+    per_device_train_batch_size=16,
+    per_device_eval_batch_size=64,
+    num_train_epochs=3,  # number of training epochs
+    logging_dir="./logs",  # where to store logs
+    logging_steps=10,  # log every 10 steps
+)
+
+def get_peft_trainer(model, training_args, train, eval):
+  return Trainer(
+        model=model,
+    args=training_args,
+    train_dataset=train,
+    eval_dataset=eval)
+  
 def train(args):
   """Train GPT-2 for paraphrase detection on the Quora dataset."""
   device = torch.device('cuda') if args.use_gpu else torch.device('cpu')
@@ -103,10 +143,6 @@ def train(args):
   para_train_data = ParaphraseDetectionDataset(para_train_data, args)
   para_dev_data = ParaphraseDetectionDataset(para_dev_data, args)
 
-  # only train on a subset of training data
-  #train_sampler = RandomSampler(para_train_data, num_samples=1000)
-  #dev_sampler = RandomSampler(para_dev_data, num_samples=1000)
-
   para_train_dataloader = DataLoader(para_train_data, shuffle=False, batch_size=args.batch_size,
                                      collate_fn=para_train_data.collate_fn)
   para_dev_dataloader = DataLoader(para_dev_data, shuffle=False, batch_size=args.batch_size,
@@ -116,42 +152,47 @@ def train(args):
   model = ParaphraseGPT(args)
   model = model.to(device)
 
-  lr = args.lr
-  optimizer = AdamW(model.parameters(), lr=lr, weight_decay=0.)
-  best_dev_acc = 0
+  if args.use_peft==True:
+    peft_model = get_peft_model(model)
+    trainer = get_peft_trainer(peft_model, get_peft_training_args, 
+    para_train_dataloader, para_dev_dataloader)
+    trainer.train()
 
-  # Run for the specified number of epochs.
-  for epoch in range(args.epochs):
-    model.train()
-    train_loss = 0
-    num_batches = 0
-    for batch in tqdm(para_train_dataloader, desc=f'train-{epoch}', disable=TQDM_DISABLE):
-      # Get the input and move it to the gpu (I do not recommend training this model on CPU).
-      b_ids, b_mask, labels = batch['token_ids'], batch['attention_mask'], batch['labels'].flatten()
-      b_ids = b_ids.to(device)
-      b_mask = b_mask.to(device)
-      labels = labels.to(device)
+  else:
+    lr = args.lr
+    optimizer = AdamW(model.parameters(), lr=lr, weight_decay=0.)
+    best_dev_acc = 0
 
-      # Compute the loss, gradients, and update the model's parameters.
-      optimizer.zero_grad()
-      logits = model(b_ids, b_mask).to(device)
-      preds = torch.argmax(logits, dim=1)
-      loss = F.cross_entropy(logits, labels, reduction='mean').to(device)
-      loss.backward()
-      optimizer.step()
+    # Run for the specified number of epochs.
+    for epoch in range(args.epochs):
+      model.train()
+      train_loss = 0
+      num_batches = 0
+      for batch in tqdm(para_train_dataloader, desc=f'train-{epoch}', disable=TQDM_DISABLE):
+        # Get the input and move it to the gpu (I do not recommend training this model on CPU).
+        b_ids, b_mask, labels = batch['token_ids'], batch['attention_mask'], batch['labels'].flatten()
+        b_ids = b_ids.to(device)
+        b_mask = b_mask.to(device)
+        labels = labels.to(device)
 
-      train_loss += loss.item()
-      num_batches += 1
+        # Compute the loss, gradients, and update the model's parameters.
+        optimizer.zero_grad()
+        logits = model(b_ids, b_mask).to(device)
+        preds = torch.argmax(logits, dim=1)
+        loss = F.cross_entropy(logits, labels, reduction='mean').to(device)
+        loss.backward()
+        optimizer.step()
 
-    train_loss = train_loss / num_batches
-    dev_acc, dev_f1, *_ = model_eval_paraphrase(para_dev_dataloader, model, device)
+        train_loss += loss.item()
+        num_batches += 1
 
-    if dev_acc > best_dev_acc:
-      best_dev_acc = dev_acc
-      save_model(model, optimizer, args, args.filepath)
+      train_loss = train_loss / num_batches
+      dev_acc, dev_f1, *_ = model_eval_paraphrase(para_dev_dataloader, model, device)
 
-    print(f"Epoch {epoch}: train loss :: {train_loss :.5f}, dev acc :: {dev_acc :.5f}")
-
+      if dev_acc > best_dev_acc:
+        best_dev_acc = dev_acc
+        save_model(model, optimizer, args, args.filepath)
+      print(f"Epoch {epoch}: train loss :: {train_loss :.5f}, dev acc :: {dev_acc :.5f}")
 
 @torch.no_grad()
 def test(args):
@@ -209,7 +250,7 @@ def get_args():
   parser.add_argument("--model_size", type=str,
                       help="The model size as specified on hugging face. DO NOT use the xl model.",
                       choices=['gpt2', 'gpt2-medium', 'gpt2-large'], default='gpt2')
-
+  parser.add_argument("--use_peft", help='use peft to speed up training', default=False)
   args = parser.parse_args()
   return args
 
