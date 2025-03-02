@@ -4,3 +4,6 @@ final_project/__pycache__/
 final_project/modules/__pycache__/
 *.zip
 ls
+**.pkl
+*.pkl
+
