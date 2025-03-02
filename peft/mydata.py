@@ -36,6 +36,7 @@ class ParaphraseDetectionDataset(Dataset):
   def __getitem__(self, idx):
     return self.dataset[idx]
 
+  ## modify collate function to pad different sequence length
   def collate_fn(self, all_data):
     sent1 = [x[0] for x in all_data]
     sent2 = [x[1] for x in all_data]
@@ -51,12 +52,17 @@ class ParaphraseDetectionDataset(Dataset):
     token_ids = torch.LongTensor(encoding['input_ids'])
     attention_mask = torch.LongTensor(encoding['attention_mask'])
 
+    ## pad 
+    padded_input_ids = torch.nn.utils.rnn.pad_sequence(token_ids, batch_first=True, padding_value=0)
+    padded_attention_masks = torch.nn.utils.rnn.pad_sequence(attention_mask, batch_first=True, padding_value=0)
+
     batched_data = {
-      'token_ids': token_ids,
-      'attention_mask': attention_mask,
+      'token_ids': padded_input_ids,
+      'attention_mask': padded_attention_masks,
       'labels': labels,
       'sent_ids': sent_ids
     }
+    #print(padded_input_ids.shape, padded_attention_masks.shape)
 
     return batched_data
 

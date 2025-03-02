@@ -1,22 +1,23 @@
 import torch
 from datasets import Dataset, load_dataset
-print(Dataset)
 import argparse
 import random
-import torch
+from torch import nn
 from mydata import (
   ParaphraseDetectionDataset,
   ParaphraseDetectionTestDataset,
   load_paraphrase_data
 )
 from torch.utils.data import DataLoader
-from transformers import AutoModelForSequenceClassification, AutoTokenizer, Trainer, TrainingArguments
+from transformers import AutoModelForSequenceClassification, AutoTokenizer, Trainer, TrainingArguments, DataCollatorWithPadding, GPT2Tokenizer
 from peft import get_peft_model, LoraConfig, TaskType
 from peft.utils import set_peft_model_state_dict
 import numpy as np
 import os
-import pickle
+import torch.nn.functional as F
 from models.gpt2 import GPT2Model
+
+os.environ["CUDA_VISIBLE_DEVICES"] = '2'
 
 # Fix the random seed.
 def seed_everything(seed=0):
@@ -37,6 +38,7 @@ class ParaphraseGPT(nn.Module):
     # need input args as class variable since forward need to be changed if peft is true
     self.args = args
 
+
     # By default, fine-tune the full model.
     for param in self.gpt.parameters():
       param.requires_grad = True
@@ -55,121 +57,79 @@ class ParaphraseGPT(nn.Module):
      of 3919) for examples that are not paraphrases.
     """
 
-    'Takes a batch of sentences and produces embeddings for them.'
-    if self.args.use_peft == True:
-      assert not labels
-      print("using peft in model forward")
-      last_token_hidden = self.gpt(input_ids, attention_mask)['last_token']
-      print("last token hidden", last_token_hidden)
-      logits = self.gpt.hidden_state_to_token(last_token_hidden)
-      print("logits", logits)
-      preds = torch.argmax(logits, dim=1)
-      print("predictions", preds)
-      loss = F.cross_entropy(logits, labels, reduction='mean').to(device)
-      print("loss", loss)
-      return loss, logits
-    else: 
-      last_token_hidden = self.gpt(input_ids, attention_mask)['last_token']
-    # two ways of doing classifications
-    # 1. adding a linear layer from hidden to # of classes with extra parameter to learn from
-    # 2. use hidden state of last unpadded token to predict what the next token would be: yes/no or even more complex token
-    ## no extra classification head needed
-    return self.gpt.hidden_state_to_token(last_token_hidden)
-
-def save_model(model, optimizer, args, filepath):
-  save_info = {
-    'model': model.state_dict(),
-    'optim': optimizer.state_dict(),
-    'args': args,
-    'system_rng': random.getstate(),
-    'numpy_rng': np.random.get_state(),
-    'torch_rng': torch.random.get_rng_state(),
-  }
-
-  torch.save(save_info, filepath)
-  print(f"save the model to {filepath}")
-
-def prepare_data():
-    para_train_data = load_paraphrase_data(args.para_train)
-    para_dev_data = load_paraphrase_data(args.para_dev)
-
-    para_train_data = ParaphraseDetectionDataset(para_train_data, args)
-    para_dev_data = ParaphraseDetectionDataset(para_dev_data, args)
-
-    para_train_dataloader = DataLoader(para_train_data, shuffle=False, batch_size=args.batch_size,
-                                        collate_fn=para_train_data.collate_fn)
-    para_dev_dataloader = DataLoader(para_dev_data, shuffle=False, batch_size=args.batch_size,
-                                    collate_fn=para_dev_data.collate_fn)
-    
-    def convert_data(dataloader, type):
-        assert type in ['train', 'dev', 'test'], "type is incorrect"
-        file_name = "peft_data_"+type+".pkl"
-        if os.path.exists(file_name) and os.path.getsize(file_name) > 0:
-            print("file exist!")
-            with open(file_name, "rb") as file:
-                data = pickle.load(file)
-            return data
-        else:
-            token_ids, attention_mask, labels, sent_ids = [], [], [], []
-            for batch in dataloader:
-                token_ids.extend(batch['token_ids'].tolist())
-                attention_mask.extend(batch['attention_mask'].tolist())
-                labels.extend(batch['labels'].tolist())
-                sent_ids.extend(batch['sent_ids'])
-            # create dictionary with data
-            data_dict = {
-            'token_ids': token_ids,
-            'attention_mask': attention_mask,
-            'labels': labels,
-            'sent_ids': sent_ids,
-            }
-            peft_data = Dataset.from_dict(data_dict)
-            print("pickling datasets")
-            with open(file_name, "wb") as file:
-                pickle.dump(peft_data, file)
-            print("peft data saved successfully")
-            return peft_data
-
-    return (convert_data(para_train_dataloader, "train"), convert_data(para_dev_dataloader, 'dev'))
+    #print("using peft in model forward")
+    last_token_hidden = self.gpt(input_ids, attention_mask)['last_token']
+    #print("last token hidden", last_token_hidden)
+    logits = self.gpt.hidden_state_to_token(last_token_hidden)
+    #print("logits", logits, logits.shape)
+    preds = torch.argmax(logits, dim=1)
+    #print("predictions", preds)
+    # data sequence length are different, get mean to reduce dimension
+    loss = F.cross_entropy(logits.to(torch.float32), labels.to(torch.long), reduction='mean')
+    #print("loss", loss)
+    return loss, logits
 
 def train(args):
     device = torch.device('cuda') if args.use_gpu else torch.device('cpu')
-    # Create the data and its corresponding datasets and dataloader.
-    train_dataset, dev_dataset = prepare_data()
+    torch.cuda.empty_cache() 
+    dataset = load_dataset("glue", "stsb")
+    tokenizer = GPT2Tokenizer.from_pretrained('gpt2')
+    # Check if the pad_token is not already defined
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+
+    def tokenize_function(examples):
+        return tokenizer(examples["sentence1"], examples["sentence2"], truncation=True, padding="max_length")
+
+# Tokenizing train, validation, and test sets
+    tokenized_datasets = dataset.map(tokenize_function, batched=True)
 
     args = add_arguments(args)
     model = ParaphraseGPT(args)
     model = model.to(device)
 
-    # 3. Load the model
-    #model_name = "bert-base-uncased"
-    #model = AutoModelForSequenceClassification.from_pretrained(model_name, num_labels=2)
-
-    # 4. Set up LoRA configuration for PEFT
     lora_config = LoraConfig(
         r=8,  # Rank for LoRA
         lora_alpha=16,
         lora_dropout=0.1,
+        bias='none',
+        target_modules=["query", "value"],
+        task_type="SEQ_CLS"
     )
 
     # Apply PEFT (LoRA) to the model
     peft_model = get_peft_model(model, lora_config)
-
-    # 5. Set up Trainer
+    
     training_args = TrainingArguments(
-        output_dir="./results",
-        num_train_epochs=3,
-        per_device_train_batch_size=8,
-        per_device_eval_batch_size=8,
-        evaluation_strategy="epoch",
-        logging_dir="./logs",
-    )
+    output_dir="./results",
+    evaluation_strategy="epoch",
+    save_strategy="epoch",
+    learning_rate=2e-4,
+    per_device_train_batch_size=16,
+    per_device_eval_batch_size=32,
+    num_train_epochs=10,
+    weight_decay=0.01,
+    logging_dir="./logs",
+    logging_steps=20,
+    load_best_model_at_end=True,
+    metric_for_best_model="accuracy",
+)
+
+    # Define a compute metric function
+    from sklearn.metrics import accuracy_score
+
+    def compute_metrics(p):
+        predictions, labels = p
+        preds = predictions.argmax(axis=-1)
+        return {"accuracy": accuracy_score(labels, preds)}
 
     trainer = Trainer(
-        model=peft_model,
+        model=model,
         args=training_args,
-        train_dataset=train_dataset,
-        eval_dataset=dev_dataset,
+        train_dataset=tokenized_datasets["train"],
+        eval_dataset=tokenized_datasets["validation"],
+        tokenizer=tokenizer,
+        compute_metrics=compute_metrics,
     )
 
     # 6. Start training

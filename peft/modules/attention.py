@@ -20,7 +20,7 @@ class CausalSelfAttention(nn.Module):
     # implementation of transformer. Although it is a bit unusual, we empirically
     # observe that it yields better performance.
     self.dropout = nn.Dropout(config.attention_probs_dropout_prob)
-    self.max_length = 1000
+    self.max_length = 1024
     
     # correct way to register causal mask by using upper triangle matrix
     self.register_buffer(
@@ -40,7 +40,7 @@ class CausalSelfAttention(nn.Module):
     
   def attention(self, key, query, value, attention_mask):
     # Compute attention scores, normalized by the dimension of of each head
-    attention_score = (query @ key.transpose(-2, -1)) * (1.0 / torch.sqrt(torch.tensor(self.attention_head_size, dtype=torch.float32)))
+    attention_score = (query @ key.transpose(-2, -1)) * (1.0 / torch.sqrt(torch.tensor(self.attention_head_size)))
     ## use mask fill to fill in inf instead of using arithmetic which will result in NaN
     attention_score = attention_score.masked_fill(self.mask[:, :, :query.shape[-2], :query.shape[-2]] == 0, float('-inf'))
     # Apply softmax to compute attention weights
