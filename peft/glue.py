@@ -56,17 +56,10 @@ class ParaphraseGPT(nn.Module):
     token "yes" (byte pair encoding index of 8505) for examples that are paraphrases or "no" (byte pair encoding index
      of 3919) for examples that are not paraphrases.
     """
-
-    #print("using peft in model forward")
     last_token_hidden = self.gpt(input_ids, attention_mask)['last_token']
-    #print("last token hidden", last_token_hidden)
     logits = self.gpt.hidden_state_to_token(last_token_hidden)
-    #print("logits", logits, logits.shape)
-    preds = torch.argmax(logits, dim=1)
-    #print("predictions", preds)
     # data sequence length are different, get mean to reduce dimension
     loss = F.cross_entropy(logits.to(torch.float32), labels.to(torch.long), reduction='mean')
-    #print("loss", loss)
     return loss, logits
 
 def train(args):
@@ -102,26 +95,23 @@ def train(args):
     
     training_args = TrainingArguments(
     output_dir="./results",
-    evaluation_strategy="epoch",
-    save_strategy="epoch",
+    evaluation_strategy="steps",
+    save_strategy="steps",
     learning_rate=2e-4,
-    per_device_train_batch_size=16,
-    per_device_eval_batch_size=32,
+    per_device_train_batch_size=32,
+    per_device_eval_batch_size=64,
     num_train_epochs=10,
     weight_decay=0.01,
     logging_dir="./logs",
     logging_steps=20,
     load_best_model_at_end=True,
-    metric_for_best_model="accuracy",
-)
-
-    # Define a compute metric function
-    from sklearn.metrics import accuracy_score
+    )
 
     def compute_metrics(p):
         predictions, labels = p
-        preds = predictions.argmax(axis=-1)
-        return {"accuracy": accuracy_score(labels, preds)}
+        cross_entropy = F.cross_entropy(torch.tensor(predictions).to(torch.float32), 
+        torch.tensor(labels).to(torch.long), reduction='mean')
+        return {"cross_entropy": cross_entropy}
 
     trainer = Trainer(
         model=model,
