@@ -16,6 +16,9 @@ import numpy as np
 import os
 import torch.nn.functional as F
 from models.gpt2 import GPT2Model
+from wbconfig import sweep_configuration
+import wandb
+from random import randint
 
 os.environ["CUDA_VISIBLE_DEVICES"] = '2'
 
@@ -31,14 +34,10 @@ def seed_everything(seed=0):
 
 class ParaphraseGPT(nn.Module):
   """Your GPT-2 Model designed for paraphrase detection."""
-  def __init__(self, args):
+  def __init__(self, config):
     super().__init__()
-    self.gpt = GPT2Model.from_pretrained(model=args.model_size, d=args.d, l=args.l, num_heads=args.num_heads)
-    self.paraphrase_detection_head = nn.Linear(args.d, 2)  # Paraphrase detection has two outputs: 1 (yes) or 0 (no).
-    # need input args as class variable since forward need to be changed if peft is true
-    self.args = args
-
-
+    self.gpt = GPT2Model.from_pretrained(model="gpt2", d=768, l=12, num_heads=12)
+    self.paraphrase_detection_head = nn.Linear(768, 2)  # Paraphrase detection has two outputs: 1 (yes) or 0 (no).
     # By default, fine-tune the full model.
     for param in self.gpt.parameters():
       param.requires_grad = True
@@ -62,29 +61,37 @@ class ParaphraseGPT(nn.Module):
     loss = F.cross_entropy(logits.to(torch.float32), labels.to(torch.long), reduction='mean')
     return loss, logits
 
-def train(args):
-    device = torch.device('cuda') if args.use_gpu else torch.device('cpu')
+def train(config):
+    seed_everything(3)
+    device = torch.device('cuda')
     torch.cuda.empty_cache() 
     dataset = load_dataset("glue", "stsb")
     tokenizer = GPT2Tokenizer.from_pretrained('gpt2')
     # Check if the pad_token is not already defined
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
-
     def tokenize_function(examples):
         return tokenizer(examples["sentence1"], examples["sentence2"], truncation=True, padding="max_length")
 
-# Tokenizing train, validation, and test sets
+    # Tokenizing train, validation, and test sets
     tokenized_datasets = dataset.map(tokenize_function, batched=True)
-
-    args = add_arguments(args)
-    model = ParaphraseGPT(args)
+    
+    ## select a subset of data to make sure the sweep runs well
+    subset_indices_train = [randint(0, 5700) for i in range(500)]
+    subset_indices_test = [randint(0, 1350) for i in range(100)]
+    tokenized_datasets['train'] = torch.utils.data.Subset(tokenized_datasets['train'], subset_indices_train)
+    tokenized_datasets['test'] = torch.utils.data.Subset(tokenized_datasets['test'], subset_indices_test)
+    
+    model = ParaphraseGPT(config)
     model = model.to(device)
 
     lora_config = LoraConfig(
-        r=8,  # Rank for LoRA
-        lora_alpha=16,
-        lora_dropout=0.1,
+        # sweeping parameter: LORA rank
+        r=config.LORA_rank,
+        lora_alpha=config.LORA_alpha,
+        lora_dropout=config.LORA_dropout,
+        use_rslora=True,
+        use_dora=config.use_dora, 
         bias='none',
         target_modules=["query", "value"],
         task_type="SEQ_CLS"
@@ -92,25 +99,28 @@ def train(args):
 
     # Apply PEFT (LoRA) to the model
     peft_model = get_peft_model(model, lora_config)
-    
     training_args = TrainingArguments(
     output_dir="./results",
     evaluation_strategy="steps",
     save_strategy="steps",
-    learning_rate=2e-4,
-    per_device_train_batch_size=32,
-    per_device_eval_batch_size=64,
-    num_train_epochs=10,
-    weight_decay=0.01,
+    learning_rate=config.lr,
+    per_device_train_batch_size=config.batch_size,
+    per_device_eval_batch_size=config.batch_size,
+    num_train_epochs=1,
+    weight_decay=config.weight_decay,
     logging_dir="./logs",
-    logging_steps=20,
+    logging_steps=10,
     load_best_model_at_end=True,
+    report_to='wandb',
+    run_name='test1'
     )
 
     def compute_metrics(p):
         predictions, labels = p
         cross_entropy = F.cross_entropy(torch.tensor(predictions).to(torch.float32), 
         torch.tensor(labels).to(torch.long), reduction='mean')
+        wandb.log({"cross entropy": cross_entropy})
+        predicted_class = np.argmax(predictions, axis=1)
         return {"cross_entropy": cross_entropy}
 
     trainer = Trainer(
@@ -122,54 +132,27 @@ def train(args):
         compute_metrics=compute_metrics,
     )
 
-    # 6. Start training
     trainer.train()
 
-def get_args():
-  parser = argparse.ArgumentParser()
+def main():
+  wandb.init(project="peft_gpt2", notes="sweep run for base gpt model on GLUE")
+  train(wandb.config)
 
-  parser.add_argument("--para_train", type=str, default="data/quora-train.csv")
-  parser.add_argument("--para_dev", type=str, default="data/quora-dev.csv")
-  parser.add_argument("--para_test", type=str, default="data/quora-test-student.csv")
-  parser.add_argument("--para_dev_out", type=str, default="predictions/para-dev-output.csv")
-  parser.add_argument("--para_test_out", type=str, default="predictions/para-test-output.csv")
+sweep_configuration = {
+  "method": "random",
 
-  parser.add_argument("--seed", type=int, default=11711)
-  parser.add_argument("--epochs", type=int, default=10)
-  parser.add_argument("--use_gpu", action='store_true')
+  "metric": {"goal": "minimize", "name" : "cross entropy"},
 
-  parser.add_argument("--batch_size", help='sst: 64, cfimdb: 8 can fit a 12GB GPU', type=int, default=8)
-  parser.add_argument("--lr", type=float, help="learning rate", default=1e-5)
-  parser.add_argument("--model_size", type=str,
-                      help="The model size as specified on hugging face. DO NOT use the xl model.",
-                      choices=['gpt2', 'gpt2-medium', 'gpt2-large'], default='gpt2')
-  parser.add_argument("--use_peft", type=bool, help='use peft to speed up training', default=False)
-  args = parser.parse_args()
-  return args
+  "parameters": {
+    "LORA_rank" : {"values" : [1, 2, 4, 8]},
+    "LORA_alpha": {"values" : [16, 32, 64]},
+    "LORA_dropout" : {"values" : [0.02, 0.1, 0.2]},
+    "use_dora" : {"values" : [True, False]},
+    "batch_size" : {"values" : [2, 4, 8]},
+    "lr" : {"values" : [2e-5, 1e-4, 5e-4]},
+    "weight_decay" : {"values" : [1e-3, 1e-2, 1e-1]}
+  }
+}
 
-
-def add_arguments(args):
-  """Add arguments that are deterministic on model size."""
-  if args.model_size == 'gpt2':
-    args.d = 768
-    args.l = 12
-    args.num_heads = 12
-  elif args.model_size == 'gpt2-medium':
-    args.d = 1024
-    args.l = 24
-    args.num_heads = 16
-  elif args.model_size == 'gpt2-large':
-    args.d = 1280
-    args.l = 36
-    args.num_heads = 20
-  else:
-    raise Exception(f'{args.model_size} is not supported.')
-  return args
-
-
-if __name__ == "__main__":
-  args = get_args()
-  args.filepath = f'{args.epochs}-{args.lr}-paraphrase.pt'  # Save path.
-  seed_everything(args.seed)  # Fix the seed for reproducibility.
-  train(args)
-  test(args)
+sweep_id = wandb.sweep(sweep=sweep_configuration)
+wandb.agent(sweep_id, function=main, project="peft_gpt2", count=1000)
